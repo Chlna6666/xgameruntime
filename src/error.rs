@@ -4,17 +4,11 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProxyError {
-    #[error("environment variable {0} is not set")]
-    MissingEnvironment(&'static str),
-
     #[error("native runtime path must be absolute: {0}")]
     NativePathNotAbsolute(PathBuf),
 
     #[error("native runtime path does not exist: {0}")]
     NativePathMissing(PathBuf),
-
-    #[error("failed to resolve the proxy DLL path: Win32 error {code}")]
-    ProxyModulePath { code: u32 },
 
     #[error("failed to load native xgameruntime from {path}: Win32 error {code}")]
     NativeLoad { path: PathBuf, code: u32 },
