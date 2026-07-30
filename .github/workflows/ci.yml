@@ -6,6 +6,7 @@ on:
       - main
       - rust-bootstrap
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -33,6 +34,9 @@ jobs:
 
       - name: Check
         run: cargo check --all-targets
+
+      - name: Test
+        run: cargo test --all-targets
 
       - name: Build Windows DLL
         if: runner.os == 'Windows'
