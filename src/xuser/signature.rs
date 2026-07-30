@@ -28,6 +28,26 @@ pub struct RequestSignatureInput<'a> {
 }
 
 pub fn sign_request(input: RequestSignatureInput<'_>) -> Result<String, HResult> {
+    validate_input(&input)?;
+
+    let timestamp = current_filetime();
+    let mut digest = hash_request(&input, timestamp);
+    let signature_result = sign_hash_with_cng(input.cng_key_name, &digest);
+    digest.zeroize();
+    let mut signature = signature_result?;
+
+    let mut header = [0u8; SIGNATURE_HEADER_SIZE];
+    header[..4].copy_from_slice(&SIGNATURE_POLICY_VERSION.to_be_bytes());
+    header[4..12].copy_from_slice(&timestamp.to_be_bytes());
+    header[12..].copy_from_slice(&signature);
+    signature.zeroize();
+
+    let encoded = STANDARD.encode(header);
+    header.zeroize();
+    Ok(encoded)
+}
+
+fn validate_input(input: &RequestSignatureInput<'_>) -> Result<(), HResult> {
     if input.cng_key_name.is_empty()
         || input.method.is_empty()
         || input.request_target.is_empty()
@@ -36,8 +56,10 @@ pub fn sign_request(input: RequestSignatureInput<'_>) -> Result<String, HResult>
     {
         return Err(E_INVALIDARG);
     }
+    Ok(())
+}
 
-    let timestamp = current_filetime();
+fn hash_request(input: &RequestSignatureInput<'_>, timestamp: u64) -> [u8; 32] {
     let mut uppercase_method = input
         .method
         .bytes()
@@ -63,19 +85,7 @@ pub fn sign_request(input: RequestSignatureInput<'_>) -> Result<String, HResult>
     hasher.update([0]);
     uppercase_method.zeroize();
 
-    let mut digest: [u8; 32] = hasher.finalize().into();
-    let mut signature = sign_hash_with_cng(input.cng_key_name, &digest)?;
-    digest.zeroize();
-
-    let mut header = [0u8; SIGNATURE_HEADER_SIZE];
-    header[..4].copy_from_slice(&SIGNATURE_POLICY_VERSION.to_be_bytes());
-    header[4..12].copy_from_slice(&timestamp.to_be_bytes());
-    header[12..].copy_from_slice(&signature);
-    signature.zeroize();
-
-    let encoded = STANDARD.encode(header);
-    header.zeroize();
-    Ok(encoded)
+    hasher.finalize().into()
 }
 
 fn current_filetime() -> u64 {
@@ -181,6 +191,25 @@ mod tests {
             body: &[],
         });
         assert_eq!(result, Err(E_INVALIDARG));
+    }
+
+    #[test]
+    fn request_hash_matches_winegdk_layout() {
+        let input = RequestSignatureInput {
+            cng_key_name: "BMCBL.XboxDevice.test",
+            method: "post",
+            request_target: "/path?q=1",
+            authorization: "XBL3.0 x=1;token",
+            policy_header_values: &[],
+            body: b"abc",
+        };
+        assert_eq!(
+            hash_request(&input, 132_537_600_000_000_000),
+            [
+                112, 236, 215, 162, 14, 158, 58, 119, 204, 59, 148, 220, 224, 77, 173, 127,
+                31, 122, 72, 213, 197, 107, 46, 157, 202, 114, 8, 198, 118, 103, 129, 78,
+            ]
+        );
     }
 
     #[test]
