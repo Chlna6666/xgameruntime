@@ -151,6 +151,7 @@ jobs:
             libvulkan-dev \
             pkg-config \
             python3 \
+            unzip \
             zip
 
       - name: Configure WineGDK x64 build
