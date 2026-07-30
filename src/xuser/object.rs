@@ -5,17 +5,13 @@
 // this repository's LICENSE and NOTICE.md.
 
 use core::ffi::{c_char, c_void};
-use std::{
-    collections::HashMap,
-    sync::{Mutex, OnceLock},
-    thread,
-    time::Duration,
-};
+use std::sync::OnceLock;
 
 use crate::{
     abi::{E_FAIL, E_POINTER, Guid, HResult, S_OK},
     profile::LaunchProfile,
     state,
+    xasync::{self, XAsyncOp, XAsyncProviderData},
 };
 
 use super::abi::{
@@ -46,19 +42,15 @@ struct XUserObject {
 unsafe impl Send for XUserObject {}
 unsafe impl Sync for XUserObject {}
 
-#[derive(Clone, Copy)]
-struct PendingAdd {
+struct XUserAddContext {
     handle: usize,
 }
 
 static USER_VTABLE: OnceLock<XUserVtable> = OnceLock::new();
 static GAMERTAG_VTABLE: OnceLock<XUserGamertagVtable> = OnceLock::new();
 static USER_OBJECT: OnceLock<XUserObject> = OnceLock::new();
-static PENDING_ADDS: OnceLock<Mutex<HashMap<usize, PendingAdd>>> = OnceLock::new();
-
-fn pending_adds() -> &'static Mutex<HashMap<usize, PendingAdd>> {
-    PENDING_ADDS.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static XUSER_ADD_IDENTITY: u8 = 0;
+const XUSER_ADD_NAME: &[u8] = b"XUserAddAsync\0";
 
 fn user_object() -> Option<&'static XUserObject> {
     let profile = state::selected_profile()?;
@@ -108,6 +100,10 @@ fn parse_age_group(value: Option<&str>) -> u32 {
         "adult" => XUSER_AGE_GROUP_ADULT,
         _ => XUSER_AGE_GROUP_UNKNOWN,
     }
+}
+
+fn xuser_add_identity() -> *const c_void {
+    (&XUSER_ADD_IDENTITY as *const u8).cast()
 }
 
 pub fn provider_interface() -> Option<*mut c_void> {
@@ -204,6 +200,49 @@ unsafe extern "system" fn get_max_users(_iface: *mut c_void, max_users: *mut u32
     S_OK
 }
 
+unsafe extern "system" fn xuser_add_provider(
+    operation: XAsyncOp,
+    provider_data: *const XAsyncProviderData,
+) -> HResult {
+    if provider_data.is_null() {
+        return E_POINTER;
+    }
+    let provider_data = unsafe { &*provider_data };
+    let context = provider_data.context.cast::<XUserAddContext>();
+    if context.is_null() {
+        return E_POINTER;
+    }
+
+    match operation {
+        XAsyncOp::Begin => unsafe { xasync::schedule(provider_data.async_block, 0) },
+        XAsyncOp::DoWork => {
+            unsafe {
+                xasync::complete(
+                    provider_data.async_block,
+                    S_OK,
+                    core::mem::size_of::<XUserHandle>(),
+                )
+            };
+            S_OK
+        }
+        XAsyncOp::GetResult => {
+            if provider_data.buffer.is_null()
+                || provider_data.buffer_size < core::mem::size_of::<XUserHandle>()
+            {
+                return E_NOT_SUFFICIENT_BUFFER;
+            }
+            let handle = unsafe { (*context).handle as XUserHandle };
+            unsafe { provider_data.buffer.cast::<XUserHandle>().write(handle) };
+            S_OK
+        }
+        XAsyncOp::Cancel => S_OK,
+        XAsyncOp::Cleanup => {
+            unsafe { drop(Box::from_raw(context)) };
+            S_OK
+        }
+    }
+}
+
 unsafe extern "system" fn add_async(
     _iface: *mut c_void,
     _options: u32,
@@ -216,37 +255,22 @@ unsafe extern "system" fn add_async(
         return E_FAIL;
     };
 
-    let key = async_block as usize;
-    let callback = unsafe { (*async_block).callback };
-    {
-        let Ok(mut pending) = pending_adds().lock() else {
-            return E_FAIL;
-        };
-        if pending
-            .insert(
-                key,
-                PendingAdd {
-                    handle: handle as usize,
-                },
-            )
-            .is_some()
-        {
-            return E_INVALIDARG;
-        }
+    let context = Box::into_raw(Box::new(XUserAddContext {
+        handle: handle as usize,
+    }));
+    let result = unsafe {
+        xasync::begin(
+            async_block,
+            context.cast(),
+            xuser_add_identity(),
+            XUSER_ADD_NAME.as_ptr().cast(),
+            xuser_add_provider,
+        )
+    };
+    if result < 0 {
+        unsafe { drop(Box::from_raw(context)) };
     }
-
-    // This is an intentionally narrow bootstrap implementation. It preserves
-    // callback-based XUserAddAsync consumers without writing to XAsyncBlock's
-    // private runtime storage. Queue-aware completion will replace this after
-    // IXThreadingImpl forwarding is validated against the native runtime.
-    if let Some(callback) = callback {
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(1));
-            unsafe { callback(key as *mut XAsyncBlock) };
-        });
-    }
-
-    S_OK
+    result
 }
 
 unsafe extern "system" fn add_result(
@@ -257,14 +281,15 @@ unsafe extern "system" fn add_result(
     if async_block.is_null() || user.is_null() {
         return E_POINTER;
     }
-    let Ok(mut pending) = pending_adds().lock() else {
-        return E_FAIL;
-    };
-    let Some(result) = pending.remove(&(async_block as usize)) else {
-        return E_FAIL;
-    };
-    unsafe { user.write(result.handle as XUserHandle) };
-    S_OK
+    unsafe {
+        xasync::get_result(
+            async_block,
+            xuser_add_identity(),
+            core::mem::size_of::<XUserHandle>(),
+            user.cast(),
+            core::ptr::null_mut(),
+        )
+    }
 }
 
 unsafe extern "system" fn get_local_id(
