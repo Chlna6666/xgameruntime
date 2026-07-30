@@ -10,7 +10,9 @@ use zeroize::Zeroize;
 
 use crate::abi::HResult;
 
-use super::abi::{E_INVALIDARG, E_NOTIMPL};
+use super::abi::E_INVALIDARG;
+#[cfg(not(windows))]
+use super::abi::E_NOTIMPL;
 
 const SIGNATURE_POLICY_VERSION: u32 = 1;
 const WINDOWS_TO_UNIX_EPOCH_SECONDS: u64 = 11_644_473_600;
