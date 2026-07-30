@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 #![deny(unsafe_op_in_unsafe_fn)]
-#![allow(non_snake_case)]
+#![allow(dead_code, non_snake_case, clippy::missing_safety_doc)]
 
 mod abi;
 mod error;
