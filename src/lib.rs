@@ -3,6 +3,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![allow(dead_code, non_snake_case, clippy::missing_safety_doc)]
 
+#[cfg(all(windows, not(target_arch = "x86_64")))]
+compile_error!("the experimental XUser vtable currently supports Windows x64 only");
+
 mod abi;
 mod error;
 mod intercept;
@@ -10,6 +13,7 @@ mod native;
 mod preauth;
 mod profile;
 mod state;
+mod xuser;
 
 use core::ffi::{c_char, c_void};
 
