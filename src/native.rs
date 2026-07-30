@@ -17,8 +17,8 @@ mod platform {
     use windows_sys::Win32::{
         Foundation::GetLastError,
         System::LibraryLoader::{
-            GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
-            LOAD_LIBRARY_SEARCH_SYSTEM32,
+            GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
+            LoadLibraryExW,
         },
     };
 
