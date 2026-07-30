@@ -188,7 +188,10 @@ mod tests {
 
     #[test]
     fn validates_decimal_identifiers() {
-        assert_eq!(parse_nonzero_decimal_u64("2535458430309376"), Some(2535458430309376));
+        assert_eq!(
+            parse_nonzero_decimal_u64("2535458430309376"),
+            Some(2535458430309376)
+        );
         assert_eq!(parse_nonzero_decimal_u64("0"), None);
         assert_eq!(parse_nonzero_decimal_u64("12x"), None);
         assert_eq!(parse_nonzero_decimal_u64("18446744073709551616"), None);
