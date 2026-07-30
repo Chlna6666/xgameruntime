@@ -15,7 +15,7 @@ mod platform {
     };
 
     use windows_sys::Win32::{
-        Foundation::GetLastError,
+        Foundation::{GetLastError, HMODULE},
         System::LibraryLoader::{
             GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
             LoadLibraryExW,
@@ -28,7 +28,7 @@ mod platform {
 
     #[derive(Debug)]
     pub struct NativeRuntime {
-        module: isize,
+        module: usize,
         path: PathBuf,
     }
 
@@ -44,25 +44,29 @@ mod platform {
             let module = unsafe {
                 LoadLibraryExW(
                     wide.as_ptr(),
-                    0,
+                    core::ptr::null_mut(),
                     LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
                 )
             };
 
-            if module == 0 {
+            if module.is_null() {
                 return Err(ProxyError::NativeLoad {
                     path,
                     code: unsafe { GetLastError() },
                 });
             }
 
-            Ok(Self { module, path })
+            Ok(Self {
+                module: module as usize,
+                path,
+            })
         }
 
         pub fn proc_address(&self, name: &'static [u8]) -> Result<usize, ProxyError> {
             debug_assert_eq!(name.last(), Some(&0));
 
-            let proc = unsafe { GetProcAddress(self.module, name.as_ptr()) };
+            let module = self.module as HMODULE;
+            let proc = unsafe { GetProcAddress(module, name.as_ptr()) };
             let Some(proc) = proc else {
                 let printable = std::str::from_utf8(&name[..name.len().saturating_sub(1)])
                     .unwrap_or("<invalid export name>");
