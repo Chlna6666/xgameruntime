@@ -34,12 +34,11 @@ impl LaunchProfile {
                     return Err(ProxyError::PreauthPathNotAbsolute(preauth_path));
                 }
 
-                let metadata = fs::metadata(&preauth_path).map_err(|source| {
-                    ProxyError::PreauthRead {
+                let metadata =
+                    fs::metadata(&preauth_path).map_err(|source| ProxyError::PreauthRead {
                         path: preauth_path.clone(),
                         source,
-                    }
-                })?;
+                    })?;
                 if !metadata.is_file() || metadata.len() > MAX_PREAUTH_FILE_SIZE {
                     return Err(ProxyError::PreauthTooLarge);
                 }
