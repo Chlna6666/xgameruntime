@@ -37,8 +37,7 @@ pub struct XAsyncProviderData {
     pub context: *mut c_void,
 }
 
-pub type XAsyncProvider =
-    unsafe extern "system" fn(XAsyncOp, *const XAsyncProviderData) -> HResult;
+pub type XAsyncProvider = unsafe extern "system" fn(XAsyncOp, *const XAsyncProviderData) -> HResult;
 
 type QueryApiImplFn =
     unsafe extern "system" fn(*const Guid, *const Guid, *mut *mut c_void) -> HResult;
@@ -50,8 +49,11 @@ struct XThreadingInterface {
 
 #[repr(C)]
 struct XThreadingVtable {
-    query_interface:
-        unsafe extern "system" fn(*mut XThreadingInterface, *const Guid, *mut *mut c_void) -> HResult,
+    query_interface: unsafe extern "system" fn(
+        *mut XThreadingInterface,
+        *const Guid,
+        *mut *mut c_void,
+    ) -> HResult,
     add_ref: unsafe extern "system" fn(*mut XThreadingInterface) -> u32,
     release: unsafe extern "system" fn(*mut XThreadingInterface) -> u32,
     async_get_status:
@@ -169,9 +171,7 @@ pub unsafe fn complete(async_block: *mut XAsyncBlock, result: HResult, required_
     let Ok(threading) = ThreadingHandle::acquire() else {
         return;
     };
-    unsafe {
-        (threading.vtable().async_complete)(threading.0, async_block, result, required_size)
-    };
+    unsafe { (threading.vtable().async_complete)(threading.0, async_block, result, required_size) };
 }
 
 pub unsafe fn get_result(
