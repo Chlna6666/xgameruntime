@@ -1,7 +1,8 @@
 ; SPDX-License-Identifier: LGPL-2.1-or-later
 ; Export ordinals follow WineGDK dlls/xgameruntime/xgameruntime.spec.
-
-LIBRARY xgameruntime
+; The LIBRARY directive is intentionally omitted because it is equivalent to
+; /DLL and can leak into Rust test harness linking. Cargo already selects the
+; DLL output kind for the cdylib target.
 
 EXPORTS
     DllCanUnloadNow @1
