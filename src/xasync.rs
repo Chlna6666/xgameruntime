@@ -174,6 +174,16 @@ pub unsafe fn complete(async_block: *mut XAsyncBlock, result: HResult, required_
     unsafe { (threading.vtable().async_complete)(threading.0, async_block, result, required_size) };
 }
 
+pub unsafe fn get_result_size(async_block: *mut XAsyncBlock, size: *mut usize) -> HResult {
+    if async_block.is_null() || size.is_null() {
+        return E_POINTER;
+    }
+    let Ok(threading) = ThreadingHandle::acquire() else {
+        return E_FAIL;
+    };
+    unsafe { (threading.vtable().async_get_result_size)(threading.0, async_block, size) }
+}
+
 pub unsafe fn get_result(
     async_block: *mut XAsyncBlock,
     identity: *const c_void,
