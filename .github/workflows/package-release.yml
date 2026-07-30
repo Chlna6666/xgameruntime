@@ -11,9 +11,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, for example v0.1.0-beta.1"
+        description: "Release version, for example v0.1.0-beta.2"
         required: false
-        default: "v0.1.0-beta.1"
+        default: "v0.1.0-beta.2"
         type: string
       publish:
         description: "Create or update a GitHub prerelease"
@@ -57,7 +57,7 @@ jobs:
             version="${GITHUB_REF_NAME#release/}"
             publish=true
           elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            version="${INPUT_VERSION:-v0.1.0-beta.1}"
+            version="${INPUT_VERSION:-v0.1.0-beta.2}"
             publish="${INPUT_PUBLISH:-false}"
           else
             version="v0.1.0-dev.${GITHUB_RUN_NUMBER}"
@@ -91,6 +91,14 @@ jobs:
         working-directory: source
         run: rustc --version --verbose
 
+      - name: Check formatting
+        working-directory: source
+        run: cargo fmt --all -- --check
+
+      - name: Check Windows implementation
+        working-directory: source
+        run: cargo check --all-targets
+
       - name: Test Windows implementation
         working-directory: source
         run: cargo test --all-targets
@@ -98,6 +106,69 @@ jobs:
       - name: Build Windows release DLL
         working-directory: source
         run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Validate exports and proxy loadability
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dll = (Resolve-Path "source/target/x86_64-pc-windows-msvc/release/xgameruntime.dll").Path
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+          if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+              throw "vswhere.exe was not found"
+          }
+          $vsPath = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
+          if ([string]::IsNullOrWhiteSpace($vsPath)) {
+              throw "Visual Studio C++ tools were not found"
+          }
+          $vcvars = Join-Path $vsPath "VC/Auxiliary/Build/vcvars64.bat"
+          $exports = (& cmd.exe /d /s /c "`"$vcvars`" >nul && dumpbin /nologo /exports `"$dll`"" | Out-String)
+          Write-Host $exports
+
+          $requiredExports = @(
+              "DllCanUnloadNow",
+              "DllGetClassObject",
+              "InitializeApiImpl",
+              "InitializeApiImplEx",
+              "InitializeApiImplEx2",
+              "QueryApiImpl",
+              "UninitializeApiImpl",
+              "XErrorReport",
+              "XGameRuntimeInitialize",
+              "XGameRuntimeUninitialize"
+          )
+          foreach ($export in $requiredExports) {
+              if ($exports -notmatch "(?m)\b$([regex]::Escape($export))\b") {
+                  throw "Missing required export: $export"
+              }
+          }
+
+          Add-Type -TypeDefinition @"
+          using System;
+          using System.Runtime.InteropServices;
+          public static class XGameRuntimeProxySmoke {
+              [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+              public static extern IntPtr LoadLibraryW(string path);
+              [DllImport("kernel32.dll", SetLastError = true)]
+              [return: MarshalAs(UnmanagedType.Bool)]
+              public static extern bool FreeLibrary(IntPtr module);
+          }
+          "@
+
+          $module = [XGameRuntimeProxySmoke]::LoadLibraryW($dll)
+          if ($module -eq [IntPtr]::Zero) {
+              $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+              throw "Proxy DLL smoke load failed with Win32 error $code"
+          }
+          try {
+              Write-Host ("Proxy smoke load succeeded: HMODULE=0x{0:X}" -f $module.ToInt64())
+          }
+          finally {
+              if (-not [XGameRuntimeProxySmoke]::FreeLibrary($module)) {
+                  $code = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+                  throw "Proxy DLL smoke unload failed with Win32 error $code"
+              }
+          }
 
       - name: Create Windows archive
         shell: pwsh
@@ -230,25 +301,39 @@ jobs:
           cat > release-notes.md <<EOF
           ## 中文说明
 
-          这是面向 Minecraft Bedrock GDK 的实验性双运行时预发布包。
+          面向 Minecraft Bedrock GDK 的实验性双运行时预发布包。
+
+          Windows x64 更新：
+          - 游戏加载代理 \`xgameruntime.dll\` 时，在 \`DllMain(DLL_PROCESS_ATTACH)\` 中同步预加载原生 Runtime；
+          - 加载顺序为环境变量绝对路径、同目录 \`xgameruntime_o.dll\`、\`C:\\Windows\\System32\\xgameruntime.dll\`；
+          - 使用标准错误输出和 \`OutputDebugStringW\` 提供加载、回退、缺失导出和卸载诊断；
+          - 保留 \`QueryApiImpl\` 中间人拦截、Rust XUser、schema v2 和 CNG 请求签名；
+          - Microsoft 官方 Runtime 不包含在发布包中。
 
           发布文件：
-          - Windows x64：Rust/MSVC 原生代理，包含 BMCBL schema v2 协议和 CNG 请求签名支持。
-          - Wine x64：从 WineGDK 固定提交 \`${WINEGDK_COMMIT}\` 构建的 Wine 模块。
+          - Windows x64：Rust/MSVC 原生代理；
+          - Wine x64：从 WineGDK 固定提交 \`${WINEGDK_COMMIT}\` 构建的 Wine 模块；
           - SHA256SUMS.txt：两个 ZIP 的 SHA-256 校验值。
 
-          Windows 与 Wine 产物是不同实现，不能互换。安装前请阅读压缩包内的中文 README。
+          Windows 与 Wine 产物是不同实现，不能互换。安装前请阅读压缩包内的中文 README 和 CHANGELOG。
 
           ## English
 
           Experimental dual-runtime package for Minecraft Bedrock GDK.
 
-          Assets:
-          - Windows x64 Rust/MSVC proxy with BMCBL schema-v2 and CNG request signing.
-          - Wine x64 module built from WineGDK commit \`${WINEGDK_COMMIT}\`.
-          - Combined SHA-256 checksums.
+          Windows x64 changes:
+          - synchronously preloads the native runtime from \`DllMain(DLL_PROCESS_ATTACH)\` when the game loads proxy \`xgameruntime.dll\`;
+          - uses the ordered candidates: absolute environment override, sibling \`xgameruntime_o.dll\`, and \`C:\\Windows\\System32\\xgameruntime.dll\`;
+          - reports load, fallback, missing-export, and unload diagnostics through standard error and \`OutputDebugStringW\`;
+          - preserves the \`QueryApiImpl\` MITM path, Rust XUser, schema v2, and CNG request signing;
+          - does not redistribute Microsoft's native runtime.
 
-          The Windows and Wine artifacts are different implementations and are not interchangeable. Read the bilingual README inside each package before installation.
+          Assets:
+          - Windows x64 Rust/MSVC native proxy;
+          - Wine x64 module built from WineGDK commit \`${WINEGDK_COMMIT}\`;
+          - combined SHA-256 checksums.
+
+          The Windows and Wine artifacts are different implementations and are not interchangeable. Read the bilingual README and CHANGELOG inside the package before installation.
           EOF
 
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
