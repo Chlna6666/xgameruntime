@@ -2,115 +2,116 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Compatibility and proxy components for Minecraft Bedrock GDK `xgameruntime.dll` environments.
+Compatibility, proxy, and account-bridge components for Minecraft Bedrock GDK `xgameruntime.dll` environments.
 
-This repository produces two distinct runtime artifacts:
+This repository produces two different artifacts:
 
-- **Windows native** — a Rust/MSVC per-process proxy for BMCBL-managed account profiles, short-lived Xbox pre-authentication, native Microsoft runtime forwarding, and optional CNG request signing.
-- **Wine** — a Wine `xgameruntime` module built from a pinned WineGDK source revision for use with matching WineGDK/GDK-Proton runtimes.
+- **Windows native** — a Rust/MSVC per-process man-in-the-middle proxy with Microsoft runtime forwarding, BMCBL profile support, short-lived Xbox pre-authentication, and optional CNG request signing;
+- **Wine** — a Wine `xgameruntime` module built from a pinned WineGDK source revision for matching WineGDK/GDK-Proton environments.
 
-> Status: experimental. The Windows implementation includes native forwarding, profile validation, XUser identity, native XAsync integration, TokenAndSignature responses, and optional CNG-backed request signatures. The Wine artifact is reproducibly built from a pinned WineGDK commit. BMCBL integration and Minecraft end-to-end validation are not complete, so neither artifact should be treated as production-ready.
+> Status: experimental. The Windows proxy loading chain, native forwarding, XUser, XAsync, TokenAndSignature, and CNG signing paths are implemented. Minecraft sign-in, friends, multiplayer, Realms, Marketplace, and related end-to-end scenarios still require validation.
 
-## Windows architecture
+## Windows proxy architecture
 
-The Windows proxy owns only the account-specific XUser surface. All unrelated GDK runtime classes continue to use the original Microsoft runtime supplied by BMCBL.
+The Windows artifact is the `xgameruntime.dll` loaded by the game. A process-local copy of the original Microsoft runtime is named `xgameruntime_o.dll`:
 
 ```text
 Minecraft Bedrock GDK
         │
         ▼
-xgameruntime.dll (Rust proxy)
+xgameruntime.dll (Rust MITM proxy)
         ├─ validated XUser GUID → Rust IXUserImpl
-        └─ every other API      → native Microsoft xgameruntime.dll
+        └─ other runtime APIs   → xgameruntime_o.dll
 ```
 
-The Rust XUser provider uses the native Microsoft `IXThreadingImpl` for `XAsyncBegin`, scheduling, completion, and result retrieval. It does not write private `XAsyncBlock` state itself.
+Default layout:
+
+```text
+<game runtime directory>/
+├─ Minecraft.Windows.exe
+├─ xgameruntime.dll      # proxy built by this project
+└─ xgameruntime_o.dll    # process-local copy of Microsoft's xgameruntime.dll
+```
+
+Do not overwrite or rename files inside the Microsoft Gaming Services installation. Copy the original DLL into the process-local game layout and rename that copy to `xgameruntime_o.dll`.
+
+## Windows preload chain
+
+The proxy follows the reference C implementation's `DllMain` behavior:
+
+1. the game loads `xgameruntime.dll`;
+2. `DllMain(DLL_PROCESS_ATTACH)` calls `DisableThreadLibraryCalls`;
+3. it synchronously calls `LoadLibraryA("xgameruntime_o.dll")`;
+4. `QueryApiImpl` first attempts the Rust XUser interception path;
+5. non-intercepted interfaces and native exports are resolved through `GetProcAddress` on the original module;
+6. an explicit proxy unload releases the original module with `FreeLibrary`.
+
+An attach-time preload failure does not prevent the proxy itself from attaching, matching the C implementation. The failure is not cached permanently: later forwarded calls retry loading `xgameruntime_o.dll`. If the original runtime still cannot be loaded, APIs requiring native forwarding fail explicitly.
+
+## Optional native-runtime override
+
+The default proxy layout does not require a runtime-path environment variable. It loads:
+
+```text
+xgameruntime_o.dll
+```
+
+A launcher may optionally provide a different process-local copy through an absolute-path override:
+
+```text
+BMCBL_NATIVE_XGAMERUNTIME=<absolute path to a copy of Microsoft's runtime>
+```
+
+The override should be scoped to the Minecraft child process and must not be configured globally.
 
 ## Windows implementation
 
-- Windows MSVC `cdylib` producing `xgameruntime.dll`;
+- Windows x64 MSVC `cdylib` producing `xgameruntime.dll`;
 - WineGDK-compatible export names and ordinals;
-- absolute-path delayed loading and forwarding to the original Microsoft runtime;
-- BMCBL-selected profile and strict pre-authentication schema v2;
-- profile ID, nonce, time range, XUID, UHS, relying-party, and CNG key-name validation;
-- secret redaction and zeroization for tokens, authorization values, digests, request bodies, and result buffers;
-- validated XUser runtime-class/interface interception behind an explicit feature gate;
-- Windows x64 `IXUserImpl` 50-slot vtable and `IXUserGamertag` interface;
+- C-style `DllMain` preload and `xgameruntime_o.dll` proxy layout;
+- dynamic lookup and forwarding of native exports;
+- `QueryApiImpl` man-in-the-middle interception;
+- BMCBL profile handling and strict pre-authentication schema v2;
+- Windows x64 `IXUserImpl` 50-slot vtable and `IXUserGamertag`;
 - XUser handles, XUID, local ID, signed-in state, age group, and privilege queries;
-- `XUserAddAsync`/`XUserAddResult` using the native XAsync state machine;
-- ANSI and UTF-16 `XUserGetTokenAndSignature*` results;
-- URL-to-relying-party routing for Xbox Live, Multiplayer, Realms, PlayFab/SISU, and Licensing;
-- `XBL3.0 x=<uhs>;<token>` authorization generation from short-lived launcher pre-authentication;
-- optional Xbox proof-of-possession signatures using a persistent current-user CNG P-256 key;
-- a Windows CNG integration test that creates a temporary P-256 key, signs an Xbox request digest, verifies the P1363 signature, and deletes the key;
-- Windows/Ubuntu CI checks and tests;
-- LGPL-2.1-or-later licensing and Wine/WineGDK provenance notices.
+- reuse of Microsoft native `IXThreadingImpl` and XAsync state management;
+- `XUserAddAsync` and `XUserAddResult`;
+- ANSI and UTF-16 `XUserGetTokenAndSignature*`;
+- relying-party routing for Xbox Live, Multiplayer, Realms, PlayFab/SISU, and Licensing;
+- optional Windows CNG P-256 Xbox proof-of-possession signatures;
+- zeroization of token, authorization, digest, body, and result buffers;
+- Windows/Ubuntu CI, Windows CNG integration tests, and MSVC release builds.
 
-## Wine artifact
+## BMCBL custom-XUser launch contract
 
-The Wine package is not the Windows Rust proxy. It does not use the Windows CNG key store, native Gaming Services forwarding, or the BMCBL schema-v2 Windows proxy contract.
+Pure native proxy forwarding does not require BMCBL profile variables.
 
-The release workflow currently builds from:
-
-```text
-Repository: https://github.com/Chlna6666/WineGDK
-Commit: 75637b674e1f191e65753663c4c0c32bea05ba6e
-Source path: dlls/xgameruntime
-```
-
-Wine built-in modules may depend on a matching Wine build tree, generated interfaces, and runtime layout. Use the artifact with a WineGDK/GDK-Proton runtime based on the same or a verified-compatible revision. ABI compatibility with unrelated system Wine releases is not guaranteed.
-
-## BMCBL launch contract
-
-BMCBL supplies the original Microsoft runtime path and optional custom-profile data through process-scoped environment variables:
+To enable the custom BMCBL XUser provider, set these variables only for the Minecraft child process:
 
 ```text
-BMCBL_NATIVE_XGAMERUNTIME=<absolute path to original xgameruntime.dll>
 BMCBL_XGAMERUNTIME_PROFILE=<profile id>
-BMCBL_XGAMERUNTIME_PREAUTH=<absolute path to short-lived schema-v2 JSON>
-BMCBL_XGAMERUNTIME_NONCE=<per-launch nonce>
+BMCBL_XGAMERUNTIME_PREAUTH=<absolute path to schema-v2 JSON>
+BMCBL_XGAMERUNTIME_NONCE=<per-launch random nonce>
 BMCBL_XGAMERUNTIME_ENABLE_XUSER=1
 ```
 
-Long-lived Microsoft refresh tokens remain in BMCBL's protected credential store and must never be written into DLL configuration or the pre-authentication document.
-
-The schema-v2 document may contain an optional CNG key name:
-
-```json
-{
-  "device_signing": {
-    "cng_key_name": "BMCBL.XboxDevice.account-2535458430309376"
-  }
-}
-```
-
-Only the key name is passed. The private P-256 key remains non-exported in the current-user CNG key store.
+Long-lived Microsoft refresh tokens, account passwords, and OAuth authorization codes must never be passed to the DLL. The DLL receives only short-lived Xbox pre-authentication material for one game process and an optional CNG key name.
 
 Protocol documentation:
 
-- [BMCBL protocol (English)](docs/BMCBL_PROTOCOL.md)
+- [BMCBL protocol](docs/BMCBL_PROTOCOL.md)
 - [BMCBL 协议（简体中文）](docs/BMCBL_PROTOCOL.zh-CN.md)
 - [Pre-authentication JSON Schema](docs/preauth-v2.schema.json)
 
-## Xbox request signing
-
-When `device_signing` is configured, the Windows DLL:
-
-1. opens the named key from Microsoft Software Key Storage Provider;
-2. builds the Xbox signing input from policy version, FILETIME, uppercase method, request target, authorization, selected policy headers, and body;
-3. computes SHA-256;
-4. signs with ECDSA P-256 through `NCryptSignHash`;
-5. returns the 76-byte `version || timestamp || r || s` structure as standard padded Base64.
-
-If signing is configured but fails, the request fails rather than silently returning an unsigned result. If `device_signing` is absent, TokenAndSignature returns a valid authorization token and an empty signature.
-
 ## Build the Windows artifact
 
-Initial supported target:
+Primary target:
 
 ```text
 x86_64-pc-windows-msvc
 ```
+
+Build:
 
 ```powershell
 cargo build --release --target x86_64-pc-windows-msvc
@@ -122,79 +123,54 @@ Output:
 target/x86_64-pc-windows-msvc/release/xgameruntime.dll
 ```
 
-Custom XUser interception is disabled by default. A controlled test launch must provide a complete valid profile context and explicitly set `BMCBL_XGAMERUNTIME_ENABLE_XUSER=1` in the Minecraft child process.
+Deployment also requires a process-local copy of the original Microsoft DLL named:
 
-## Packaging and releases
+```text
+xgameruntime_o.dll
+```
 
-`.github/workflows/package-release.yml` produces two independent archives:
+The Microsoft DLL is not redistributed by this project.
+
+## Packaging and version
+
+Current version:
+
+```text
+v0.1.0-beta.2
+```
+
+The release workflow produces:
 
 ```text
 xgameruntime-<version>-windows-x64.zip
 xgameruntime-<version>-wine-x64.zip
 ```
 
-Each archive contains:
+The Windows archive contains the proxy, protocol files, schema, licenses, build manifest, and SHA-256 checksums. It does not contain Microsoft's original `xgameruntime.dll`.
 
-- the relevant DLL artifact;
-- English and Simplified Chinese README files;
-- `manifest.json` with exact source revisions;
-- licensing and provenance files;
-- per-file `SHA256SUMS`.
+## Wine artifact
 
-Published GitHub releases additionally contain `SHA256SUMS.txt` for the two ZIP assets.
+The Wine package is not the Windows Rust proxy. It does not use the Windows `DllMain` preload path, Microsoft Gaming Services, Windows CNG, or the `xgameruntime_o.dll` layout.
 
-The artifacts are not interchangeable:
-
-- do not overwrite the system-wide Microsoft Gaming Services installation with the Windows package;
-- do not copy the Wine package into Microsoft Gaming Services;
-- install the Wine module only through a matching WineGDK/GDK-Proton runtime layout or packaging system.
-
-## Validation
-
-The GitHub Actions matrix runs on Ubuntu and Windows:
+Pinned source:
 
 ```text
-cargo fmt --all -- --check
-cargo check --all-targets
-cargo test --all-targets
+Repository: https://github.com/Chlna6666/WineGDK
+Commit: 75637b674e1f191e65753663c4c0c32bea05ba6e
+Source path: dlls/xgameruntime
 ```
 
-The Windows job additionally builds the release DLL for `x86_64-pc-windows-msvc`. Windows tests exercise Microsoft Software Key Storage Provider by creating a temporary ECDSA P-256 key, using the production signing path, verifying the signature, and deleting the key.
+Use the Wine module with a WineGDK/GDK-Proton runtime based on the same or a verified-compatible source revision.
 
-The packaging workflow independently tests and builds the Windows artifact, configures a pinned WineGDK x64 build tree, builds the Wine module, creates bilingual archives, generates checksums, and publishes prereleases from release branches or version tags.
+## Security and limitations
 
-## Remaining work
-
-- BMCBL account-store integration;
-- persistent CNG P-256 key creation and public JWK export in BMCBL;
-- stable Xbox device ID and device/SISU enrollment in BMCBL;
-- per-launch pre-authentication schema-v2 generation;
-- native runtime path resolution, environment setup, and DLL injection in BMCBL;
-- `ForceRefresh` coordination when a running game's short-lived token set approaches expiry;
-- completion of XUser methods currently left as explicit stubs where Minecraft requires them;
-- Minecraft Bedrock GDK startup, friends, multiplayer, Realms, and Marketplace validation;
-- XSAPI behavior verification with the custom XUser handle.
-
-## Porting policy
-
-Do not mechanically translate the complete WineGDK directory. Each source unit must first be classified as:
-
-1. portable GDK ABI/interface logic;
-2. reusable Xbox authentication or request-signing logic;
-3. Wine-only loader, registry, TLS, or threading behavior;
-4. Windows-native proxy behavior;
-5. BMCBL-owned profile and credential management.
-
-Unsupported runtime classes remain forwarded to the native Microsoft runtime. Unsupported XUser methods remain explicit stubs until their ABI and Minecraft call paths are validated.
+- do not modify the Microsoft Gaming Services installation;
+- do not register the proxy as a system-wide runtime;
+- do not write refresh tokens, passwords, or reusable private keys into DLL configuration;
+- custom XUser interception is disabled by default;
+- unsupported methods remain explicit failures or stubs;
+- Minecraft sign-in, friends, multiplayer, Realms, Marketplace, and XSAPI still require end-to-end validation.
 
 ## Licensing
 
-This repository is distributed under **GNU LGPL-2.1-or-later** to preserve the Wine/WineGDK licensing boundary of the source implementation.
-
-The implementation is derived from:
-
-- `Chlna6666/WineGDK`;
-- source path: `dlls/xgameruntime`;
-- upstream lineage: WineGDK and Wine.
-
-Existing copyright and license notices must be retained when code is ported. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
+This repository is distributed under **GNU LGPL-2.1-or-later** and preserves the Wine/WineGDK provenance and licensing boundary. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
