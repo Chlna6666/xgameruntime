@@ -17,7 +17,7 @@ pub enum ProxyError {
     NativeLoad { path: PathBuf, code: u32 },
 
     #[error("native xgameruntime does not export {0}")]
-    MissingExport(&'static str),
+    MissingExport(String),
 
     #[error("custom profile configuration is incomplete")]
     IncompleteProfileEnvironment,
