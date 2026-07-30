@@ -155,17 +155,17 @@ pub struct XUserGamertagVtable {
 }
 
 pub fn is_xuser_interface(iid: &Guid) -> bool {
-    matches!(
-        *iid,
-        IID_IUNKNOWN
-            | IID_IXUSER_BASE
-            | IID_IXUSER_ADD_WITH_UI
-            | IID_IXUSER_MSA
-            | IID_IXUSER_STORE
-            | IID_IXUSER_PLATFORM
-            | IID_IXUSER_SIGN_OUT
-            | IID_IXUSER_GAMERTAG
-    )
+    [
+        IID_IUNKNOWN,
+        IID_IXUSER_BASE,
+        IID_IXUSER_ADD_WITH_UI,
+        IID_IXUSER_MSA,
+        IID_IXUSER_STORE,
+        IID_IXUSER_PLATFORM,
+        IID_IXUSER_SIGN_OUT,
+        IID_IXUSER_GAMERTAG,
+    ]
+    .contains(iid)
 }
 
 #[cfg(test)]
