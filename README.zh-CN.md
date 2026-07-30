@@ -21,10 +21,10 @@ Minecraft Bedrock GDK
         ▼
 xgameruntime.dll（Rust 中间人代理）
         ├─ 已验证的 XUser GUID → Rust IXUserImpl
-        └─ 其他 Runtime/API     → xgameruntime_o.dll
+        └─ 其他 Runtime/API     → Microsoft 官方 Runtime
 ```
 
-默认文件布局：
+推荐文件布局：
 
 ```text
 <游戏运行目录>/
@@ -41,19 +41,53 @@ xgameruntime.dll（Rust 中间人代理）
 
 1. 游戏加载 `xgameruntime.dll`；
 2. `DllMain(DLL_PROCESS_ATTACH)` 调用 `DisableThreadLibraryCalls`；
-3. 同步调用 `LoadLibraryA("xgameruntime_o.dll")`；
+3. 同步执行原生 Runtime 加载链；
 4. `QueryApiImpl` 先尝试 Rust XUser 中间人拦截；
-5. 未拦截接口通过 `GetProcAddress` 转发到官方 DLL；
+5. 未拦截接口通过 `GetProcAddress` 转发到最终加载的官方 DLL；
 6. 显式卸载代理时，通过 `FreeLibrary` 释放官方 DLL。
 
-若 attach 阶段第一次预加载失败，代理仍按 C 版本返回成功；失败结果不会永久缓存，后续需要原生转发时会再次尝试加载 `xgameruntime_o.dll`。如果仍无法加载，需要原生 Runtime 的 API 会返回失败，不会伪装为成功。
+原生 Runtime 的实际加载顺序为：
+
+```text
+1. BMCBL_NATIVE_XGAMERUNTIME 指定的绝对路径（若设置）
+2. 同目录 xgameruntime_o.dll
+3. C:\Windows\System32\xgameruntime.dll
+```
+
+若 attach 阶段第一次预加载失败，代理仍按 C 版本返回成功；失败结果不会永久缓存，后续需要原生转发时会重新尝试完整加载链。如果所有候选都无法加载，需要原生 Runtime 的 API 会返回失败，不会伪装为成功。
+
+## 调试输出
+
+Windows 代理不依赖第三方日志库。运行时同时使用：
+
+- 标准错误输出；
+- Win32 `OutputDebugStringW`。
+
+输出内容包括：
+
+- `DLL_PROCESS_ATTACH` 预加载开始和结果；
+- 环境变量覆盖路径；
+- `xgameruntime_o.dll` 加载尝试；
+- System32 回退；
+- Win32 加载错误码；
+- 最终转发目标和 `HMODULE`；
+- 缺失导出；
+- 显式卸载状态。
+
+可通过 Visual Studio、WinDbg、DebugView，或带控制台的测试宿主查看这些信息。
 
 ## 可选原生 DLL 路径覆盖
 
-默认情况下不需要设置原生 Runtime 路径。代理直接加载同目录：
+默认情况下不需要设置原生 Runtime 路径。代理优先加载同目录：
 
 ```text
 xgameruntime_o.dll
+```
+
+若该文件不存在或无法加载，会自动尝试：
+
+```text
+C:\Windows\System32\xgameruntime.dll
 ```
 
 如启动器需要使用其他进程级副本，可设置可选绝对路径覆盖：
@@ -62,13 +96,15 @@ xgameruntime_o.dll
 BMCBL_NATIVE_XGAMERUNTIME=<Microsoft 官方 DLL 副本的绝对路径>
 ```
 
-该变量仅对当前游戏子进程生效，不应写入系统全局环境。
+该变量仅对当前游戏子进程生效，不应写入系统全局环境。覆盖路径加载失败时，代理仍继续尝试同目录和 System32 候选。
 
 ## Windows 原生版已实现
 
 - Windows x64 MSVC `cdylib`，输出 `xgameruntime.dll`；
 - 与 WineGDK 一致的导出名称和 ordinal；
 - C 风格 `DllMain` preload 和 `xgameruntime_o.dll` 代理布局；
+- System32 官方 Runtime 自动回退；
+- 无第三方依赖的标准错误输出与 `OutputDebugStringW` 调试信息；
 - 原生导出的动态查找和转发；
 - `QueryApiImpl` 中间人拦截；
 - BMCBL Profile 与严格的预认证 schema v2；
@@ -123,13 +159,13 @@ cargo build --release --target x86_64-pc-windows-msvc
 target/x86_64-pc-windows-msvc/release/xgameruntime.dll
 ```
 
-部署时还需要自行准备 Microsoft 官方 DLL 的进程级副本：
+推荐部署时准备 Microsoft 官方 DLL 的进程级副本：
 
 ```text
 xgameruntime_o.dll
 ```
 
-官方 DLL 不包含在本项目发布包中。
+如果未提供该副本，代理会尝试系统 `C:\Windows\System32\xgameruntime.dll`。官方 DLL 不包含在本项目发布包中。
 
 ## 打包与版本
 
