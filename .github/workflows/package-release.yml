@@ -163,7 +163,7 @@ jobs:
       - name: Build Wine xgameruntime module
         run: |
           set -euo pipefail
-          make -C wine-build -j2 dlls/xgameruntime
+          make -C wine-build/dlls/xgameruntime -j2
           find wine-build/dlls/xgameruntime -maxdepth 2 -type f -name 'xgameruntime.dll*' -print -exec file {} \;
 
       - name: Create Wine archive
@@ -227,6 +227,19 @@ jobs:
         run: |
           set -euo pipefail
           cat > release-notes.md <<EOF
+          ## 中文说明
+
+          这是面向 Minecraft Bedrock GDK 的实验性双运行时预发布包。
+
+          发布文件：
+          - Windows x64：Rust/MSVC 原生代理，包含 BMCBL schema v2 协议和 CNG 请求签名支持。
+          - Wine x64：从 WineGDK 固定提交 \`${WINEGDK_COMMIT}\` 构建的 Wine 模块。
+          - SHA256SUMS.txt：两个 ZIP 的 SHA-256 校验值。
+
+          Windows 与 Wine 产物是不同实现，不能互换。安装前请阅读压缩包内的中文 README。
+
+          ## English
+
           Experimental dual-runtime package for Minecraft Bedrock GDK.
 
           Assets:
@@ -234,7 +247,7 @@ jobs:
           - Wine x64 module built from WineGDK commit \`${WINEGDK_COMMIT}\`.
           - Combined SHA-256 checksums.
 
-          The Windows and Wine artifacts are different implementations and are not interchangeable. Read the README inside each package before installation.
+          The Windows and Wine artifacts are different implementations and are not interchangeable. Read the bilingual README inside each package before installation.
           EOF
 
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
