@@ -24,8 +24,10 @@ New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $packageName = "xgameruntime-$Version-windows-x64"
 $stageDirectory = Join-Path ([System.IO.Path]::GetTempPath()) $packageName
 $archivePath = Join-Path $outputRoot "$packageName.zip"
+$validationRoot = Join-Path ([System.IO.Path]::GetTempPath()) "$packageName-validation"
 
 Remove-Item -LiteralPath $stageDirectory -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $validationRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stageDirectory | Out-Null
 
@@ -62,7 +64,44 @@ $checksumLines = Get-ChildItem -LiteralPath $stageDirectory -File |
     }
 $checksumLines | Set-Content -LiteralPath (Join-Path $stageDirectory "SHA256SUMS") -Encoding ascii
 
-Compress-Archive -Path (Join-Path $stageDirectory "*") -DestinationPath $archivePath -CompressionLevel Optimal
+Compress-Archive -Path $stageDirectory -DestinationPath $archivePath -CompressionLevel Optimal
+
+Expand-Archive -LiteralPath $archivePath -DestinationPath $validationRoot
+$validatedPackage = Join-Path $validationRoot $packageName
+$requiredFiles = @(
+    "xgameruntime.dll",
+    "README.md",
+    "README.zh-CN.md",
+    "BMCBL_PROTOCOL.md",
+    "BMCBL_PROTOCOL.zh-CN.md",
+    "preauth-v2.schema.json",
+    "LICENSE",
+    "NOTICE.md",
+    "manifest.json",
+    "SHA256SUMS"
+)
+foreach ($requiredFile in $requiredFiles) {
+    $requiredPath = Join-Path $validatedPackage $requiredFile
+    if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+        throw "Windows package validation failed, missing: $requiredFile"
+    }
+}
+
+$checksumPath = Join-Path $validatedPackage "SHA256SUMS"
+foreach ($line in Get-Content -LiteralPath $checksumPath) {
+    if ($line -notmatch '^([0-9a-f]{64})  (.+)$') {
+        throw "Invalid SHA256SUMS line: $line"
+    }
+    $expectedHash = $Matches[1]
+    $fileName = $Matches[2]
+    $filePath = Join-Path $validatedPackage $fileName
+    $actualHash = (Get-FileHash -LiteralPath $filePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $expectedHash) {
+        throw "Checksum mismatch for $fileName"
+    }
+}
+
+Remove-Item -LiteralPath $validationRoot -Recurse -Force
 $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 Write-Host "Created $archivePath"
 Write-Host "SHA256 $archiveHash"
