@@ -10,7 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     abi::{E_FAIL, E_POINTER, HResult, S_OK},
@@ -26,6 +26,10 @@ use super::{
 };
 
 const TOKEN_OPTIONS_MASK: u32 = 0x03;
+const MAX_METHOD_LENGTH: usize = 32;
+const MAX_URL_LENGTH: usize = 32 * 1024;
+const MAX_HEADER_COUNT: usize = 128;
+const MAX_REQUEST_BODY_SIZE: usize = 64 * 1024 * 1024;
 const MAX_UTF16_INPUT_UNITS: usize = 32 * 1024;
 const TOKEN_NAME_ANSI: &[u8] = b"XUserGetTokenAndSignatureAsync\0";
 const TOKEN_NAME_UTF16: &[u8] = b"XUserGetTokenAndSignatureUtf16Async\0";
@@ -83,8 +87,12 @@ impl TokenContext {
         }
         let request_target = request_target_from_url(url).ok_or(E_INVALIDARG)?;
 
-        let authorization_text = format!("XBL3.0 x={};{}", token.user_hash, token.token.expose());
-        let signature_text = match &profile.preauth.device_signing {
+        let authorization_text = Zeroizing::new(format!(
+            "XBL3.0 x={};{}",
+            token.user_hash,
+            token.token.expose()
+        ));
+        let signature_text = Zeroizing::new(match &profile.preauth.device_signing {
             Some(device_signing) => signature::sign_request(RequestSignatureInput {
                 cng_key_name: &device_signing.cng_key_name,
                 method,
@@ -94,7 +102,7 @@ impl TokenContext {
                 body,
             })?,
             None => String::new(),
-        };
+        });
 
         let mut authorization = authorization_text.as_bytes().to_vec();
         authorization.push(0);
@@ -306,6 +314,9 @@ unsafe fn validate_ansi_headers(
     headers: *const XUserGetTokenAndSignatureHttpHeader,
     count: usize,
 ) -> HResult {
+    if count > MAX_HEADER_COUNT {
+        return E_INVALIDARG;
+    }
     if count == 0 {
         return S_OK;
     }
@@ -326,6 +337,9 @@ unsafe fn validate_utf16_headers(
     headers: *const XUserGetTokenAndSignatureUtf16HttpHeader,
     count: usize,
 ) -> HResult {
+    if count > MAX_HEADER_COUNT {
+        return E_INVALIDARG;
+    }
     if count == 0 {
         return S_OK;
     }
@@ -464,7 +478,16 @@ unsafe fn begin_token_request(
     if (header_count != 0 && headers.is_null()) || (body_size != 0 && body.is_null()) {
         return E_POINTER;
     }
-    if method.is_empty() || url.is_empty() || options & !TOKEN_OPTIONS_MASK != 0 {
+    if method.is_empty()
+        || method.len() > MAX_METHOD_LENGTH
+        || !method.is_ascii()
+        || url.is_empty()
+        || url.len() > MAX_URL_LENGTH
+        || !url.is_ascii()
+        || header_count > MAX_HEADER_COUNT
+        || body_size > MAX_REQUEST_BODY_SIZE
+        || options & !TOKEN_OPTIONS_MASK != 0
+    {
         return E_INVALIDARG;
     }
 
@@ -688,6 +711,13 @@ mod tests {
             request_target_from_url("https://example.com").as_deref(),
             Some("/")
         );
+    }
+
+    #[test]
+    fn rejects_request_metadata_above_limits() {
+        assert!(MAX_METHOD_LENGTH < MAX_URL_LENGTH);
+        assert!(MAX_HEADER_COUNT <= 128);
+        assert!(MAX_REQUEST_BODY_SIZE <= 64 * 1024 * 1024);
     }
 
     #[test]
