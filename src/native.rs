@@ -12,6 +12,7 @@ pub const SYSTEM_RUNTIME_PATH: &str = r"C:\Windows\System32\xgameruntime.dll";
 mod platform {
     use std::{
         env,
+        io::Write,
         os::windows::ffi::OsStrExt,
         path::{Path, PathBuf},
     };
@@ -45,11 +46,8 @@ mod platform {
 
             if let Some(path) = env::var_os(NATIVE_RUNTIME_ENV) {
                 let path = PathBuf::from(path);
-                debug_log(&format!(
-                    "尝试环境变量覆盖路径: {}",
-                    path.display()
-                ));
-                match Self::load_absolute(path) {
+                debug_log(&format!("尝试环境变量覆盖路径: {}", path.display()));
+                match Self::load_absolute(path, true) {
                     Ok(runtime) => return Ok(runtime),
                     Err(error) => debug_log(&format!(
                         "环境变量覆盖路径加载失败: {error}; 继续尝试默认代理布局"
@@ -68,7 +66,7 @@ mod platform {
 
             let system_path = PathBuf::from(SYSTEM_RUNTIME_PATH);
             debug_log(&format!("尝试系统 Runtime: {}", system_path.display()));
-            match Self::load_absolute(system_path) {
+            match Self::load_absolute(system_path, false) {
                 Ok(runtime) => Ok(runtime),
                 Err(error) => {
                     debug_log(&format!("系统 Runtime 加载失败: {error}"));
@@ -91,15 +89,14 @@ mod platform {
                 module: module as usize,
                 path,
             };
-            debug_log(&format!(
-                "原生 Runtime 加载成功: {} (HMODULE=0x{:X})",
-                runtime.path.display(), runtime.module
-            ));
+            runtime.log_loaded();
             Ok(runtime)
         }
 
-        fn load_absolute(path: PathBuf) -> Result<Self, ProxyError> {
-            validate_native_path(&path)?;
+        fn load_absolute(path: PathBuf, validate_path: bool) -> Result<Self, ProxyError> {
+            if validate_path {
+                validate_native_path(&path)?;
+            }
 
             let wide = to_wide(&path);
             let module = unsafe {
@@ -118,11 +115,15 @@ mod platform {
                 module: module as usize,
                 path,
             };
+            runtime.log_loaded();
+            Ok(runtime)
+        }
+
+        fn log_loaded(&self) {
             debug_log(&format!(
                 "原生 Runtime 加载成功: {} (HMODULE=0x{:X})",
-                runtime.path.display(), runtime.module
+                self.path.display(), self.module
             ));
-            Ok(runtime)
         }
 
         pub fn proc_address(&self, name: &'static [u8]) -> Result<usize, ProxyError> {
@@ -163,7 +164,9 @@ mod platform {
 
     pub fn debug_log(message: &str) {
         let line = format!("{LOG_PREFIX}{message}");
-        eprintln!("{line}");
+
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(stderr, "{line}");
 
         let wide = line
             .encode_utf16()
