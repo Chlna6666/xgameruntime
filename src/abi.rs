@@ -23,8 +23,7 @@ pub type DllGetClassObjectFn =
     unsafe extern "system" fn(*const Guid, *const Guid, *mut *mut c_void) -> HResult;
 pub type InitializeApiImplFn = unsafe extern "system" fn(u32, u32) -> HResult;
 pub type InitializeApiImplExFn = unsafe extern "system" fn(u32, u32, i8) -> HResult;
-pub type InitializeApiImplEx2Fn =
-    unsafe extern "system" fn(u32, u32, i8, *mut c_void) -> HResult;
+pub type InitializeApiImplEx2Fn = unsafe extern "system" fn(u32, u32, i8, *mut c_void) -> HResult;
 pub type QueryApiImplFn =
     unsafe extern "system" fn(*const Guid, *const Guid, *mut *mut c_void) -> HResult;
 pub type UninitializeApiImplFn = unsafe extern "system" fn() -> HResult;
