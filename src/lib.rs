@@ -13,6 +13,7 @@ mod native;
 mod preauth;
 mod profile;
 mod state;
+mod xasync;
 mod xuser;
 
 use core::ffi::{c_char, c_void};
