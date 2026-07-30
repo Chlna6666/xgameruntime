@@ -206,8 +206,8 @@ mod tests {
         assert_eq!(
             hash_request(&input, 132_537_600_000_000_000),
             [
-                112, 236, 215, 162, 14, 158, 58, 119, 204, 59, 148, 220, 224, 77, 173, 127,
-                31, 122, 72, 213, 197, 107, 46, 157, 202, 114, 8, 198, 118, 103, 129, 78,
+                112, 236, 215, 162, 14, 158, 58, 119, 204, 59, 148, 220, 224, 77, 173, 127, 31,
+                122, 72, 213, 197, 107, 46, 157, 202, 114, 8, 198, 118, 103, 129, 78,
             ]
         );
     }
@@ -272,11 +272,7 @@ mod tests {
         };
         assert_eq!(
             unsafe {
-                NCryptOpenStorageProvider(
-                    &mut temporary_key.provider,
-                    provider_name.as_ptr(),
-                    0,
-                )
+                NCryptOpenStorageProvider(&mut temporary_key.provider, provider_name.as_ptr(), 0)
             },
             0
         );
