@@ -14,11 +14,12 @@ Windows 原生代理加载链更新：
 - 在 `DLL_PROCESS_ATTACH` 中调用 `DisableThreadLibraryCalls`；
 - 游戏加载代理 `xgameruntime.dll` 时同步预加载同目录 `xgameruntime_o.dll`；
 - Microsoft 官方 `xgameruntime.dll` 的进程级副本统一命名为 `xgameruntime_o.dll`；
-- 保留 `BMCBL_NATIVE_XGAMERUNTIME` 作为可选绝对路径覆盖项；
-- 首次预加载失败不会永久缓存，后续原生 API 转发仍会重新尝试加载；
+- 原生 Runtime 加载顺序统一为：可选 `BMCBL_NATIVE_XGAMERUNTIME` 绝对路径 → 同目录 `xgameruntime_o.dll` → `C:\Windows\System32\xgameruntime.dll`；
+- 首次预加载失败不会永久缓存，后续原生 API 转发仍会重新尝试完整加载链；
+- 使用标准错误输出与 Win32 `OutputDebugStringW` 输出加载尝试、失败原因、最终目标、缺失导出和卸载状态，不引入第三方日志库；
 - 显式卸载代理 DLL 时释放原生运行时模块；
 - 保留现有 `QueryApiImpl` 中间人拦截、Rust XUser Provider 与其余原生 API 动态转发；
-- 更新 Windows 中英文部署、协议和打包说明；
+- 更新 Windows 中英文部署、协议、打包与发布说明；
 - 未读取或依赖参考包中的 `setup_token.reg` 与 `deploy.ps1`。
 
 ### English
@@ -29,11 +30,12 @@ Windows native proxy loading-chain update:
 - calls `DisableThreadLibraryCalls` during `DLL_PROCESS_ATTACH`;
 - synchronously preloads sibling `xgameruntime_o.dll` when the game loads proxy `xgameruntime.dll`;
 - standardizes the process-local copy of the Microsoft runtime as `xgameruntime_o.dll`;
-- keeps `BMCBL_NATIVE_XGAMERUNTIME` as an optional absolute-path override;
-- does not permanently cache an initial preload failure, so later forwarded calls retry loading;
+- uses the native-runtime order: optional absolute `BMCBL_NATIVE_XGAMERUNTIME` override → sibling `xgameruntime_o.dll` → `C:\Windows\System32\xgameruntime.dll`;
+- does not permanently cache an initial preload failure, so later forwarded calls retry the complete loading chain;
+- reports load attempts, failures, selected target, missing exports, and unload state through standard error and Win32 `OutputDebugStringW` without a third-party logging library;
 - releases the native runtime module during an explicit proxy unload;
 - preserves the existing `QueryApiImpl` interception, Rust XUser provider, and dynamic forwarding for native APIs;
-- updates bilingual Windows deployment, protocol, and packaging documentation;
+- updates bilingual Windows deployment, protocol, packaging, and release documentation;
 - does not read or depend on `setup_token.reg` or `deploy.ps1` from the reference package.
 
 ## v0.1.0-beta.1
