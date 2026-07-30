@@ -22,6 +22,7 @@ use crate::{
 use super::{
     abi::{E_INVALIDARG, E_NOT_SUFFICIENT_BUFFER, XAsyncBlock, XUserHandle},
     object,
+    signature::{self, RequestSignatureInput},
 };
 
 const TOKEN_OPTIONS_MASK: u32 = 0x03;
@@ -63,26 +64,56 @@ struct TokenContext {
     utf16: bool,
     authorization: Vec<u8>,
     authorization_utf16: Vec<u16>,
+    signature: Vec<u8>,
+    signature_utf16: Vec<u16>,
 }
 
 impl TokenContext {
-    fn new(user: XUserHandle, url: &str, utf16: bool) -> Result<Self, HResult> {
+    fn new(
+        user: XUserHandle,
+        method: &str,
+        url: &str,
+        body: &[u8],
+        utf16: bool,
+    ) -> Result<Self, HResult> {
         let profile = profile_for_user(user)?;
         let token = select_token(&profile.preauth.xbox, url).ok_or(E_FAIL)?;
         if token.expires_at_epoch <= now_epoch().saturating_add(MIN_TOKEN_REMAINING_SECONDS) {
             return Err(E_FAIL);
         }
+        let request_target = request_target_from_url(url).ok_or(E_INVALIDARG)?;
 
         let authorization_text = format!("XBL3.0 x={};{}", token.user_hash, token.token.expose());
+        let signature_text = match &profile.preauth.device_signing {
+            Some(device_signing) => signature::sign_request(RequestSignatureInput {
+                cng_key_name: &device_signing.cng_key_name,
+                method,
+                request_target: &request_target,
+                authorization: &authorization_text,
+                policy_header_values: &[],
+                body,
+            })?,
+            None => String::new(),
+        };
+
         let mut authorization = authorization_text.as_bytes().to_vec();
         authorization.push(0);
         let mut authorization_utf16 = authorization_text.encode_utf16().collect::<Vec<_>>();
         authorization_utf16.push(0);
 
+        let mut signature = signature_text.as_bytes().to_vec();
+        let mut signature_utf16 = signature_text.encode_utf16().collect::<Vec<_>>();
+        if !signature.is_empty() {
+            signature.push(0);
+            signature_utf16.push(0);
+        }
+
         Ok(Self {
             utf16,
             authorization,
             authorization_utf16,
+            signature,
+            signature_utf16,
         })
     }
 
@@ -90,11 +121,13 @@ impl TokenContext {
         if self.utf16 {
             self.authorization_utf16
                 .len()
+                .checked_add(self.signature_utf16.len())?
                 .checked_mul(core::mem::size_of::<u16>())?
                 .checked_add(core::mem::size_of::<XUserGetTokenAndSignatureUtf16Data>())
         } else {
             self.authorization
                 .len()
+                .checked_add(self.signature.len())?
                 .checked_add(core::mem::size_of::<XUserGetTokenAndSignatureData>())
         }
     }
@@ -104,6 +137,8 @@ impl Drop for TokenContext {
     fn drop(&mut self) {
         self.authorization.zeroize();
         self.authorization_utf16.zeroize();
+        self.signature.zeroize();
+        self.signature_utf16.zeroize();
     }
 }
 
@@ -219,6 +254,29 @@ fn url_host(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
+fn request_target_from_url(url: &str) -> Option<String> {
+    let authority = url.split_once("://")?.1;
+    if authority.is_empty() {
+        return None;
+    }
+    let start = authority
+        .char_indices()
+        .find_map(|(index, character)| matches!(character, '/' | '?' | '#').then_some(index));
+    let Some(start) = start else {
+        return Some("/".to_string());
+    };
+    let suffix = &authority[start..];
+    if suffix.starts_with('#') {
+        return Some("/".to_string());
+    }
+    let suffix = suffix.split_once('#').map_or(suffix, |(value, _)| value);
+    if suffix.starts_with('?') {
+        Some(format!("/{suffix}"))
+    } else {
+        Some(suffix.to_string())
+    }
+}
+
 fn host_matches(host: &str, expected: &str, allow_subdomains: bool) -> bool {
     host.eq_ignore_ascii_case(expected)
         || (allow_subdomains
@@ -242,6 +300,47 @@ unsafe fn utf16_to_string(value: *const u16) -> Result<String, HResult> {
     }
 
     Err(E_INVALIDARG)
+}
+
+unsafe fn validate_ansi_headers(
+    headers: *const XUserGetTokenAndSignatureHttpHeader,
+    count: usize,
+) -> HResult {
+    if count == 0 {
+        return S_OK;
+    }
+    if headers.is_null() {
+        return E_POINTER;
+    }
+    for header in unsafe { core::slice::from_raw_parts(headers, count) } {
+        if header.name.is_null() || header.value.is_null() {
+            return E_POINTER;
+        }
+        let _ = unsafe { CStr::from_ptr(header.name) };
+        let _ = unsafe { CStr::from_ptr(header.value) };
+    }
+    S_OK
+}
+
+unsafe fn validate_utf16_headers(
+    headers: *const XUserGetTokenAndSignatureUtf16HttpHeader,
+    count: usize,
+) -> HResult {
+    if count == 0 {
+        return S_OK;
+    }
+    if headers.is_null() {
+        return E_POINTER;
+    }
+    for header in unsafe { core::slice::from_raw_parts(headers, count) } {
+        if let Err(error) = unsafe { utf16_to_string(header.name) } {
+            return error;
+        }
+        if let Err(error) = unsafe { utf16_to_string(header.value) } {
+            return error;
+        }
+    }
+    S_OK
 }
 
 unsafe extern "system" fn token_provider(
@@ -281,34 +380,59 @@ unsafe extern "system" fn token_provider(
                     .buffer
                     .cast::<XUserGetTokenAndSignatureUtf16Data>();
                 let token = unsafe { data.add(1).cast::<u16>() };
+                let signature = if context.signature_utf16.is_empty() {
+                    core::ptr::null_mut()
+                } else {
+                    unsafe { token.add(context.authorization_utf16.len()) }
+                };
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         context.authorization_utf16.as_ptr(),
                         token,
                         context.authorization_utf16.len(),
                     );
+                    if !signature.is_null() {
+                        core::ptr::copy_nonoverlapping(
+                            context.signature_utf16.as_ptr(),
+                            signature,
+                            context.signature_utf16.len(),
+                        );
+                    }
                     data.write(XUserGetTokenAndSignatureUtf16Data {
                         token_count: context.authorization_utf16.len()
                             * core::mem::size_of::<u16>(),
-                        signature_count: 0,
+                        signature_count: context.signature_utf16.len()
+                            * core::mem::size_of::<u16>(),
                         token,
-                        signature: core::ptr::null(),
+                        signature,
                     });
                 }
             } else {
                 let data = provider_data.buffer.cast::<XUserGetTokenAndSignatureData>();
                 let token = unsafe { data.add(1).cast::<u8>() };
+                let signature = if context.signature.is_empty() {
+                    core::ptr::null_mut()
+                } else {
+                    unsafe { token.add(context.authorization.len()) }
+                };
                 unsafe {
                     core::ptr::copy_nonoverlapping(
                         context.authorization.as_ptr(),
                         token,
                         context.authorization.len(),
                     );
+                    if !signature.is_null() {
+                        core::ptr::copy_nonoverlapping(
+                            context.signature.as_ptr(),
+                            signature,
+                            context.signature.len(),
+                        );
+                    }
                     data.write(XUserGetTokenAndSignatureData {
                         token_size: context.authorization.len(),
-                        signature_size: 0,
+                        signature_size: context.signature.len(),
                         token: token.cast(),
-                        signature: core::ptr::null(),
+                        signature: signature.cast(),
                     });
                 }
             }
@@ -344,10 +468,16 @@ unsafe fn begin_token_request(
         return E_INVALIDARG;
     }
 
+    let body = if body_size == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(body.cast::<u8>(), body_size) }
+    };
+
     // ForceRefresh cannot mint a new token inside the injected process. The
     // launcher must provide a fresh short-lived preauth document before launch;
     // this path therefore reuses it only while its expiry margin remains valid.
-    let context = match TokenContext::new(user, url, utf16) {
+    let context = match TokenContext::new(user, method, url, body, utf16) {
         Ok(context) => Box::into_raw(Box::new(context)),
         Err(error) => return error,
     };
@@ -380,6 +510,10 @@ pub unsafe extern "system" fn get_token_and_signature_async(
 ) -> HResult {
     if method.is_null() || url.is_null() {
         return E_POINTER;
+    }
+    let header_status = unsafe { validate_ansi_headers(headers, header_count) };
+    if header_status < 0 {
+        return header_status;
     }
     let method = match unsafe { CStr::from_ptr(method) }.to_str() {
         Ok(method) => method,
@@ -445,6 +579,10 @@ pub unsafe extern "system" fn get_token_and_signature_utf16_async(
     body: *const c_void,
     async_block: *mut XAsyncBlock,
 ) -> HResult {
+    let header_status = unsafe { validate_utf16_headers(headers, header_count) };
+    if header_status < 0 {
+        return header_status;
+    }
     let method = match unsafe { utf16_to_string(method) } {
         Ok(method) => method,
         Err(error) => return error,
@@ -534,6 +672,22 @@ mod tests {
             Some("multiplayer.minecraft.net")
         );
         assert_eq!(url_host("invalid"), None);
+    }
+
+    #[test]
+    fn extracts_request_target_without_fragment() {
+        assert_eq!(
+            request_target_from_url("https://example.com/path?q=1#fragment").as_deref(),
+            Some("/path?q=1")
+        );
+        assert_eq!(
+            request_target_from_url("https://example.com?q=1").as_deref(),
+            Some("/?q=1")
+        );
+        assert_eq!(
+            request_target_from_url("https://example.com").as_deref(),
+            Some("/")
+        );
     }
 
     #[test]
