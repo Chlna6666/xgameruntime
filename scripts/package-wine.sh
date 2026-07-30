@@ -34,17 +34,19 @@ if [[ ${#so_candidates[@]} -gt 0 ]]; then
 fi
 
 cp "$repository_root/packaging/WINE.md" "$stage_dir/README.md"
+cp "$repository_root/packaging/WINE.zh-CN.md" "$stage_dir/README.zh-CN.md"
 cp "$winegdk_dir/LICENSE" "$stage_dir/LICENSE.winegdk"
 cat > "$stage_dir/SOURCE.md" <<EOF
-# Source provenance
+# Source provenance / 源码来源
 
-- Package project: https://github.com/Chlna6666/xgameruntime
-- Package project commit: \`${project_commit}\`
-- Wine implementation: https://github.com/Chlna6666/WineGDK
-- WineGDK commit: \`${winegdk_commit}\`
-- Wine source path: \`dlls/xgameruntime\`
+- Package project / 打包项目: https://github.com/Chlna6666/xgameruntime
+- Package project commit / 打包项目提交: \`${project_commit}\`
+- Wine implementation / Wine 实现: https://github.com/Chlna6666/WineGDK
+- WineGDK commit / WineGDK 提交: \`${winegdk_commit}\`
+- Wine source path / Wine 源路径: \`dlls/xgameruntime\`
 
 The Wine artifact is distributed under the Wine/WineGDK LGPL terms included in \`LICENSE.winegdk\`.
+Wine 产物依据 \`LICENSE.winegdk\` 中包含的 Wine/WineGDK LGPL 条款分发。
 EOF
 
 python3 - "$stage_dir/manifest.json" <<PY
@@ -63,6 +65,7 @@ manifest = {
     "source_commit": "${project_commit}",
     "winegdk_repository": "https://github.com/Chlna6666/WineGDK",
     "winegdk_commit": "${winegdk_commit}",
+    "documentation_languages": ["en", "zh-CN"],
     "experimental": True,
 }
 path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
