@@ -37,7 +37,8 @@ The Rust XUser provider uses the native Microsoft `IXThreadingImpl` for `XAsyncB
 - URL-to-relying-party routing for Xbox Live, Multiplayer, Realms, PlayFab/SISU and Licensing;
 - `XBL3.0 x=<uhs>;<token>` authorization generation from short-lived launcher pre-authentication;
 - optional Xbox proof-of-possession signatures using a persistent current-user CNG P-256 key;
-- Windows/Ubuntu CI checks;
+- Windows/Ubuntu CI checks and unit tests;
+- a Windows CNG integration test that creates a temporary P-256 key, signs an Xbox request digest and verifies the resulting P1363 signature;
 - LGPL-2.1-or-later license and Wine/WineGDK provenance notices.
 
 ## Remaining work
@@ -105,6 +106,18 @@ target/x86_64-pc-windows-msvc/release/xgameruntime.dll
 ```
 
 Custom XUser interception is disabled by default. For a controlled test launch, all profile variables must be valid and `BMCBL_XGAMERUNTIME_ENABLE_XUSER=1` must be set in the Minecraft child process.
+
+## Validation
+
+The GitHub Actions matrix runs on Ubuntu and Windows:
+
+```text
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo test --all-targets
+```
+
+The Windows job additionally builds the release DLL for `x86_64-pc-windows-msvc`. Windows tests exercise the actual Microsoft Software Key Storage Provider by creating a temporary ECDSA P-256 key, using the production signing path, verifying the signature, and deleting the key.
 
 ## Porting policy
 
