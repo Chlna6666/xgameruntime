@@ -1,0 +1,13 @@
+/target/
+/Cargo.lock
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+.vs/
+.idea/
+.vscode/
+.env
+*.preauth.json
