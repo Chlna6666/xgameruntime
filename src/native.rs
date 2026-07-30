@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::error::ProxyError;
 
@@ -148,25 +148,40 @@ mod platform {
 
 pub use platform::NativeRuntime;
 
-static NATIVE_RUNTIME: OnceLock<Result<NativeRuntime, ProxyError>> = OnceLock::new();
+static NATIVE_RUNTIME: OnceLock<NativeRuntime> = OnceLock::new();
+static NATIVE_RUNTIME_INIT: Mutex<()> = Mutex::new(());
 
 #[cfg(windows)]
 pub fn preload() {
-    let _ = NATIVE_RUNTIME.get_or_init(NativeRuntime::load);
+    let _ = runtime();
 }
 
 #[cfg(windows)]
 pub unsafe fn unload() {
-    if let Some(Ok(runtime)) = NATIVE_RUNTIME.get() {
+    if let Some(runtime) = NATIVE_RUNTIME.get() {
         unsafe {
             runtime.unload();
         }
     }
 }
 
-pub fn runtime() -> Result<&'static NativeRuntime, &'static ProxyError> {
-    match NATIVE_RUNTIME.get_or_init(NativeRuntime::load) {
-        Ok(runtime) => Ok(runtime),
-        Err(error) => Err(error),
+pub fn runtime() -> Result<&'static NativeRuntime, ProxyError> {
+    if let Some(runtime) = NATIVE_RUNTIME.get() {
+        return Ok(runtime);
     }
+
+    let _guard = NATIVE_RUNTIME_INIT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    if let Some(runtime) = NATIVE_RUNTIME.get() {
+        return Ok(runtime);
+    }
+
+    let runtime = NativeRuntime::load()?;
+    let _ = NATIVE_RUNTIME.set(runtime);
+
+    Ok(NATIVE_RUNTIME
+        .get()
+        .expect("native runtime is initialized before returning"))
 }
