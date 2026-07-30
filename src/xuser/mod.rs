@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
-mod abi;
+pub(crate) mod abi;
 mod object;
 
 use core::ffi::c_void;
