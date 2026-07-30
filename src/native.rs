@@ -6,6 +6,7 @@ use crate::error::ProxyError;
 
 pub const NATIVE_RUNTIME_ENV: &str = "BMCBL_NATIVE_XGAMERUNTIME";
 pub const NATIVE_RUNTIME_FILENAME: &str = "xgameruntime_o.dll";
+pub const SYSTEM_RUNTIME_PATH: &str = r"C:\Windows\System32\xgameruntime.dll";
 
 #[cfg(windows)]
 mod platform {
@@ -17,15 +18,20 @@ mod platform {
 
     use windows_sys::Win32::{
         Foundation::{GetLastError, HMODULE},
-        System::LibraryLoader::{
-            FreeLibrary, GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
-            LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryA, LoadLibraryExW,
+        System::{
+            Diagnostics::Debug::OutputDebugStringW,
+            LibraryLoader::{
+                FreeLibrary, GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
+                LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryA, LoadLibraryExW,
+            },
         },
     };
 
     use crate::error::ProxyError;
 
-    use super::{NATIVE_RUNTIME_ENV, NATIVE_RUNTIME_FILENAME};
+    use super::{NATIVE_RUNTIME_ENV, NATIVE_RUNTIME_FILENAME, SYSTEM_RUNTIME_PATH};
+
+    const LOG_PREFIX: &str = "[xgameruntime-proxy] ";
 
     #[derive(Debug)]
     pub struct NativeRuntime {
@@ -35,26 +41,61 @@ mod platform {
 
     impl NativeRuntime {
         pub fn load() -> Result<Self, ProxyError> {
-            match env::var_os(NATIVE_RUNTIME_ENV) {
-                Some(path) => Self::load_absolute(PathBuf::from(path)),
-                None => Self::load_proxy_sibling(),
+            debug_log("开始加载 Microsoft 原生 xgameruntime");
+
+            if let Some(path) = env::var_os(NATIVE_RUNTIME_ENV) {
+                let path = PathBuf::from(path);
+                debug_log(&format!(
+                    "尝试环境变量覆盖路径: {}",
+                    path.display()
+                ));
+                match Self::load_absolute(path) {
+                    Ok(runtime) => return Ok(runtime),
+                    Err(error) => debug_log(&format!(
+                        "环境变量覆盖路径加载失败: {error}; 继续尝试默认代理布局"
+                    )),
+                }
+            } else {
+                debug_log("未设置 BMCBL_NATIVE_XGAMERUNTIME，使用默认代理布局");
+            }
+
+            match Self::load_proxy_sibling() {
+                Ok(runtime) => return Ok(runtime),
+                Err(error) => debug_log(&format!(
+                    "加载同目录 {NATIVE_RUNTIME_FILENAME} 失败: {error}; 尝试系统 Runtime"
+                )),
+            }
+
+            let system_path = PathBuf::from(SYSTEM_RUNTIME_PATH);
+            debug_log(&format!("尝试系统 Runtime: {}", system_path.display()));
+            match Self::load_absolute(system_path) {
+                Ok(runtime) => Ok(runtime),
+                Err(error) => {
+                    debug_log(&format!("系统 Runtime 加载失败: {error}"));
+                    Err(error)
+                }
             }
         }
 
         fn load_proxy_sibling() -> Result<Self, ProxyError> {
             let path = PathBuf::from(NATIVE_RUNTIME_FILENAME);
+            debug_log(&format!("尝试加载同目录 {NATIVE_RUNTIME_FILENAME}"));
+
             let module = unsafe { LoadLibraryA(b"xgameruntime_o.dll\0".as_ptr()) };
             if module.is_null() {
-                return Err(ProxyError::NativeLoad {
-                    path,
-                    code: unsafe { GetLastError() },
-                });
+                let code = unsafe { GetLastError() };
+                return Err(ProxyError::NativeLoad { path, code });
             }
 
-            Ok(Self {
+            let runtime = Self {
                 module: module as usize,
                 path,
-            })
+            };
+            debug_log(&format!(
+                "原生 Runtime 加载成功: {} (HMODULE=0x{:X})",
+                runtime.path.display(), runtime.module
+            ));
+            Ok(runtime)
         }
 
         fn load_absolute(path: PathBuf) -> Result<Self, ProxyError> {
@@ -69,16 +110,19 @@ mod platform {
                 )
             };
             if module.is_null() {
-                return Err(ProxyError::NativeLoad {
-                    path,
-                    code: unsafe { GetLastError() },
-                });
+                let code = unsafe { GetLastError() };
+                return Err(ProxyError::NativeLoad { path, code });
             }
 
-            Ok(Self {
+            let runtime = Self {
                 module: module as usize,
                 path,
-            })
+            };
+            debug_log(&format!(
+                "原生 Runtime 加载成功: {} (HMODULE=0x{:X})",
+                runtime.path.display(), runtime.module
+            ));
+            Ok(runtime)
         }
 
         pub fn proc_address(&self, name: &'static [u8]) -> Result<usize, ProxyError> {
@@ -89,6 +133,10 @@ mod platform {
             let Some(proc) = proc else {
                 let printable = std::str::from_utf8(&name[..name.len().saturating_sub(1)])
                     .unwrap_or("<invalid export name>");
+                debug_log(&format!(
+                    "原生 Runtime 缺少导出 {printable}: {}",
+                    self.path.display()
+                ));
                 return Err(ProxyError::MissingExport(printable.to_owned()));
             };
 
@@ -98,15 +146,32 @@ mod platform {
         pub unsafe fn unload(&self) {
             let module = self.module as HMODULE;
             if !module.is_null() {
+                debug_log(&format!(
+                    "释放原生 Runtime: {} (HMODULE=0x{:X})",
+                    self.path.display(), self.module
+                ));
                 unsafe {
                     FreeLibrary(module);
                 }
             }
         }
 
-        #[allow(dead_code)]
         pub fn path(&self) -> &Path {
             &self.path
+        }
+    }
+
+    pub fn debug_log(message: &str) {
+        let line = format!("{LOG_PREFIX}{message}");
+        eprintln!("{line}");
+
+        let wide = line
+            .encode_utf16()
+            .chain(std::iter::once(b'\n' as u16))
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        unsafe {
+            OutputDebugStringW(wide.as_ptr());
         }
     }
 
@@ -153,7 +218,16 @@ static NATIVE_RUNTIME_INIT: Mutex<()> = Mutex::new(());
 
 #[cfg(windows)]
 pub fn preload() {
-    let _ = runtime();
+    platform::debug_log("DLL_PROCESS_ATTACH: 开始同步预加载原生 Runtime");
+    match runtime() {
+        Ok(runtime) => platform::debug_log(&format!(
+            "DLL_PROCESS_ATTACH: 预加载完成，转发目标为 {}",
+            runtime.path().display()
+        )),
+        Err(error) => platform::debug_log(&format!(
+            "DLL_PROCESS_ATTACH: 预加载失败: {error}; 代理继续装载，后续调用将重试"
+        )),
+    }
 }
 
 #[cfg(windows)]
@@ -162,6 +236,8 @@ pub unsafe fn unload() {
         unsafe {
             runtime.unload();
         }
+    } else {
+        platform::debug_log("DLL_PROCESS_DETACH: 原生 Runtime 未加载，无需释放");
     }
 }
 
