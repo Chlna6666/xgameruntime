@@ -102,7 +102,7 @@ impl PreauthDocument {
             return Err(ProxyError::PreauthExpired);
         }
 
-        if self.xbox.xuid.is_empty() || !self.xbox.xuid.bytes().all(|byte| byte.is_ascii_digit()) {
+        if parse_nonzero_decimal_u64(&self.xbox.xuid).is_none() {
             return Err(ProxyError::InvalidToken("xuid"));
         }
         if self.xbox.gamertag.trim().is_empty() {
@@ -159,7 +159,7 @@ fn validate_token(
     now_epoch: u64,
 ) -> Result<(), ProxyError> {
     if token.token.is_empty()
-        || token.user_hash.trim().is_empty()
+        || parse_nonzero_decimal_u64(&token.user_hash).is_none()
         || token.relying_party.trim().is_empty()
         || token.expires_at_epoch <= now_epoch.saturating_add(MIN_TOKEN_REMAINING_SECONDS)
     {
@@ -173,4 +173,24 @@ fn validate_token(
     }
 
     Ok(())
+}
+
+fn parse_nonzero_decimal_u64(value: &str) -> Option<u64> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse::<u64>().ok().filter(|value| *value != 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_nonzero_decimal_u64;
+
+    #[test]
+    fn validates_decimal_identifiers() {
+        assert_eq!(parse_nonzero_decimal_u64("2535458430309376"), Some(2535458430309376));
+        assert_eq!(parse_nonzero_decimal_u64("0"), None);
+        assert_eq!(parse_nonzero_decimal_u64("12x"), None);
+        assert_eq!(parse_nonzero_decimal_u64("18446744073709551616"), None);
+    }
 }
