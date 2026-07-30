@@ -14,12 +14,16 @@ use crate::{
     xasync::{self, XAsyncOp, XAsyncProviderData},
 };
 
-use super::abi::{
-    E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, E_NOT_SUFFICIENT_BUFFER, IID_IUNKNOWN,
-    IID_IXUSER_ADD_WITH_UI, IID_IXUSER_BASE, IID_IXUSER_GAMERTAG, IID_IXUSER_MSA,
-    IID_IXUSER_PLATFORM, IID_IXUSER_SIGN_OUT, IID_IXUSER_STORE, XAsyncBlock, XUserGamertagVtable,
-    XUserHandle, XUserLocalId, XUserVtable, XUSER_AGE_GROUP_ADULT, XUSER_AGE_GROUP_CHILD,
-    XUSER_AGE_GROUP_TEEN, XUSER_AGE_GROUP_UNKNOWN, XUSER_STATE_SIGNED_IN,
+use super::{
+    abi::{
+        E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, E_NOT_SUFFICIENT_BUFFER, IID_IUNKNOWN,
+        IID_IXUSER_ADD_WITH_UI, IID_IXUSER_BASE, IID_IXUSER_GAMERTAG, IID_IXUSER_MSA,
+        IID_IXUSER_PLATFORM, IID_IXUSER_SIGN_OUT, IID_IXUSER_STORE, XAsyncBlock,
+        XUserGamertagVtable, XUserHandle, XUserLocalId, XUserVtable, XUSER_AGE_GROUP_ADULT,
+        XUSER_AGE_GROUP_CHILD, XUSER_AGE_GROUP_TEEN, XUSER_AGE_GROUP_UNKNOWN,
+        XUSER_STATE_SIGNED_IN,
+    },
+    token,
 };
 
 #[repr(C)]
@@ -512,12 +516,14 @@ fn user_vtable() -> *const XUserVtable {
         check_privilege: check_privilege as usize,
         resolve_privilege_with_ui_async: stub_hresult as usize,
         resolve_privilege_with_ui_result: stub_hresult as usize,
-        get_token_and_signature_async: stub_hresult as usize,
-        get_token_and_signature_result_size: stub_hresult as usize,
-        get_token_and_signature_result: stub_hresult as usize,
-        get_token_and_signature_utf16_async: stub_hresult as usize,
-        get_token_and_signature_utf16_result_size: stub_hresult as usize,
-        get_token_and_signature_utf16_result: stub_hresult as usize,
+        get_token_and_signature_async: token::get_token_and_signature_async as usize,
+        get_token_and_signature_result_size: token::get_token_and_signature_result_size as usize,
+        get_token_and_signature_result: token::get_token_and_signature_result as usize,
+        get_token_and_signature_utf16_async: token::get_token_and_signature_utf16_async as usize,
+        get_token_and_signature_utf16_result_size:
+            token::get_token_and_signature_utf16_result_size as usize,
+        get_token_and_signature_utf16_result:
+            token::get_token_and_signature_utf16_result as usize,
         resolve_issue_with_ui_async: stub_hresult as usize,
         resolve_issue_with_ui_result: stub_hresult as usize,
         resolve_issue_with_ui_utf16_async: stub_hresult as usize,
