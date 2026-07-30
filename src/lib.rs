@@ -25,10 +25,7 @@ use abi::{
 };
 
 #[cfg(windows)]
-use windows_sys::Win32::{
-    Foundation::HMODULE,
-    System::LibraryLoader::DisableThreadLibraryCalls,
-};
+use windows_sys::Win32::{Foundation::HMODULE, System::LibraryLoader::DisableThreadLibraryCalls};
 
 #[cfg(windows)]
 const DLL_PROCESS_DETACH: u32 = 0;
