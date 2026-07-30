@@ -22,8 +22,8 @@ mod platform {
         System::{
             Diagnostics::Debug::OutputDebugStringW,
             LibraryLoader::{
-                FreeLibrary, GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR,
-                LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryA, LoadLibraryExW,
+                GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
+                LoadLibraryA, LoadLibraryExW,
             },
         },
     };
@@ -33,6 +33,15 @@ mod platform {
     use super::{NATIVE_RUNTIME_ENV, NATIVE_RUNTIME_FILENAME, SYSTEM_RUNTIME_PATH};
 
     const LOG_PREFIX: &str = "[xgameruntime-proxy] ";
+
+    // windows-sys 0.59 does not expose FreeLibrary through the selected
+    // LibraryLoader projection on all generated target combinations. Bind the
+    // stable Kernel32 ABI directly so unloading does not depend on projection
+    // layout or crate-version-specific feature gates.
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn FreeLibrary(module: HMODULE) -> i32;
+    }
 
     #[derive(Debug)]
     pub struct NativeRuntime {
