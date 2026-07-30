@@ -97,8 +97,7 @@ impl PreauthDocument {
         }
 
         if self.issued_at_epoch > now_epoch.saturating_add(CLOCK_SKEW_SECONDS)
-            || self.expires_at_epoch
-                <= now_epoch.saturating_add(MIN_TOKEN_REMAINING_SECONDS)
+            || self.expires_at_epoch <= now_epoch.saturating_add(MIN_TOKEN_REMAINING_SECONDS)
         {
             return Err(ProxyError::PreauthExpired);
         }
