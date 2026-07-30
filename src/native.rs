@@ -122,7 +122,8 @@ mod platform {
         fn log_loaded(&self) {
             debug_log(&format!(
                 "原生 Runtime 加载成功: {} (HMODULE=0x{:X})",
-                self.path.display(), self.module
+                self.path.display(),
+                self.module
             ));
         }
 
@@ -149,7 +150,8 @@ mod platform {
             if !module.is_null() {
                 debug_log(&format!(
                     "释放原生 Runtime: {} (HMODULE=0x{:X})",
-                    self.path.display(), self.module
+                    self.path.display(),
+                    self.module
                 ));
                 unsafe {
                     FreeLibrary(module);
