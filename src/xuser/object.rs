@@ -520,10 +520,9 @@ fn user_vtable() -> *const XUserVtable {
         get_token_and_signature_result_size: token::get_token_and_signature_result_size as usize,
         get_token_and_signature_result: token::get_token_and_signature_result as usize,
         get_token_and_signature_utf16_async: token::get_token_and_signature_utf16_async as usize,
-        get_token_and_signature_utf16_result_size:
-            token::get_token_and_signature_utf16_result_size as usize,
-        get_token_and_signature_utf16_result:
-            token::get_token_and_signature_utf16_result as usize,
+        get_token_and_signature_utf16_result_size: token::get_token_and_signature_utf16_result_size
+            as usize,
+        get_token_and_signature_utf16_result: token::get_token_and_signature_utf16_result as usize,
         resolve_issue_with_ui_async: stub_hresult as usize,
         resolve_issue_with_ui_result: stub_hresult as usize,
         resolve_issue_with_ui_utf16_async: stub_hresult as usize,
