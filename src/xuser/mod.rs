@@ -2,6 +2,7 @@
 
 pub(crate) mod abi;
 mod object;
+mod signature;
 mod token;
 
 use core::ffi::c_void;
