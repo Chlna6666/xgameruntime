@@ -163,7 +163,7 @@ jobs:
       - name: Build Wine xgameruntime module
         run: |
           set -euo pipefail
-          make -C wine-build -j2 dlls/xgameruntime/xgameruntime.dll
+          make -C wine-build -j2 dlls/xgameruntime
           find wine-build/dlls/xgameruntime -maxdepth 2 -type f -name 'xgameruntime.dll*' -print -exec file {} \;
 
       - name: Create Wine archive
