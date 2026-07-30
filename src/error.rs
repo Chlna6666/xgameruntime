@@ -13,6 +13,9 @@ pub enum ProxyError {
     #[error("native runtime path does not exist: {0}")]
     NativePathMissing(PathBuf),
 
+    #[error("failed to resolve the proxy DLL path: Win32 error {code}")]
+    ProxyModulePath { code: u32 },
+
     #[error("failed to load native xgameruntime from {path}: Win32 error {code}")]
     NativeLoad { path: PathBuf, code: u32 },
 
