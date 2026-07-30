@@ -10,7 +10,6 @@ pub const NATIVE_RUNTIME_ENV: &str = "BMCBL_NATIVE_XGAMERUNTIME";
 mod platform {
     use std::{
         env,
-        ffi::OsStr,
         os::windows::ffi::OsStrExt,
         path::{Path, PathBuf},
     };
@@ -67,14 +66,13 @@ mod platform {
             let Some(proc) = proc else {
                 let printable = std::str::from_utf8(&name[..name.len().saturating_sub(1)])
                     .unwrap_or("<invalid export name>");
-                return Err(ProxyError::MissingExport(Box::leak(
-                    printable.to_owned().into_boxed_str(),
-                )));
+                return Err(ProxyError::MissingExport(printable.to_owned()));
             };
 
             Ok(proc as usize)
         }
 
+        #[allow(dead_code)]
         pub fn path(&self) -> &Path {
             &self.path
         }
@@ -91,7 +89,7 @@ mod platform {
     }
 
     fn to_wide(path: &Path) -> Vec<u16> {
-        OsStr::new(path.as_os_str())
+        path.as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
             .collect()
