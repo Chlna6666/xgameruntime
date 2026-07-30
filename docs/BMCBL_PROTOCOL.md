@@ -4,16 +4,28 @@ This document defines the process-level contract between Better Minecraft Bedroc
 
 ## Windows proxy layout
 
-The default Windows deployment uses two process-local DLLs:
+The recommended Windows deployment uses two process-local DLLs:
 
 ```text
 xgameruntime.dll    # Rust proxy loaded by Minecraft
 xgameruntime_o.dll  # copy of Microsoft's original xgameruntime.dll
 ```
 
-The proxy synchronously attempts to load `xgameruntime_o.dll` from `DllMain(DLL_PROCESS_ATTACH)`. A failed preload is not cached permanently; later forwarded API calls retry the load.
+The proxy synchronously executes its native-runtime loading chain from `DllMain(DLL_PROCESS_ATTACH)`. The candidates are tried in this order:
 
-Do not modify, overwrite, or rename files in the Microsoft Gaming Services installation. BMCBL should copy the original runtime into the game process layout and rename the copy to `xgameruntime_o.dll`.
+```text
+1. BMCBL_NATIVE_XGAMERUNTIME absolute-path override, when configured
+2. sibling xgameruntime_o.dll
+3. C:\Windows\System32\xgameruntime.dll
+```
+
+A failed preload is not cached permanently; later forwarded API calls retry the complete chain.
+
+Do not modify, overwrite, or rename files in the Microsoft Gaming Services installation. BMCBL should preferably copy the original runtime into the game process layout and rename the copy to `xgameruntime_o.dll`.
+
+## Diagnostic output
+
+The proxy does not depend on a third-party logging library. It reports preload attempts, fallback decisions, Win32 error codes, the selected target, missing exports, and unload state through both standard error and Win32 `OutputDebugStringW`.
 
 ## Security boundary
 
@@ -32,13 +44,13 @@ BMCBL may set these variables before creating the Minecraft process:
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `BMCBL_NATIVE_XGAMERUNTIME` | No | Optional absolute-path override for a process-local copy of Microsoft's runtime. If absent, the proxy loads sibling `xgameruntime_o.dll`. |
+| `BMCBL_NATIVE_XGAMERUNTIME` | No | Optional absolute-path override for a process-local copy of Microsoft's runtime. If loading it fails, the proxy continues with sibling `xgameruntime_o.dll` and then the System32 runtime. |
 | `BMCBL_XGAMERUNTIME_PROFILE` | For custom profile | Stable BMCBL profile ID using only ASCII letters, digits, `.`, `_`, and `-`. |
 | `BMCBL_XGAMERUNTIME_PREAUTH` | For custom profile | Absolute path to the versioned pre-authentication JSON file. |
 | `BMCBL_XGAMERUNTIME_NONCE` | Recommended | Per-launch random nonce that must match the JSON document. |
 | `BMCBL_XGAMERUNTIME_ENABLE_XUSER` | For custom XUser | Set to `1` to enable the experimental Rust XUser provider. If absent, all APIs are forwarded to the native runtime. |
 
-For pure native forwarding, no BMCBL environment variables are required when `xgameruntime_o.dll` is present beside the proxy.
+For pure native forwarding, no BMCBL environment variables are required when either sibling `xgameruntime_o.dll` or the System32 runtime can be loaded.
 
 If custom-profile variables are absent, the DLL operates as a native proxy. If they are incomplete or invalid, custom XUser interception remains disabled and calls continue to the Microsoft runtime.
 
@@ -159,9 +171,9 @@ A later protocol revision should pass a duplicated read-only file handle instead
 
 ## Native runtime forwarding
 
-The default forwarding target is sibling `xgameruntime_o.dll`. `BMCBL_NATIVE_XGAMERUNTIME` may override it with a validated absolute path.
+The proxy chooses the forwarding target using the ordered chain documented above. `BMCBL_NATIVE_XGAMERUNTIME` is an optional validated override, not a hard requirement.
 
-The proxy never modifies the Gaming Services installation and never intentionally loads itself as the forwarding target. Only validated XUser runtime-class/interface GUIDs are intercepted when the explicit XUser feature gate is enabled. All other runtime classes and native exports remain owned by the Microsoft runtime.
+The proxy never modifies the Gaming Services installation and never intentionally loads itself as the forwarding target. Only validated XUser runtime-class/interface GUIDs are intercepted when the explicit XUser feature gate is enabled. All other runtime classes and native exports remain owned by the selected Microsoft runtime.
 
 ## Implemented XUser surface
 
