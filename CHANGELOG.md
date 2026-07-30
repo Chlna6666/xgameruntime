@@ -4,6 +4,38 @@
 
 This project uses experimental prerelease versions before the first stable release. Windows and Wine artifacts are different implementations and are not interchangeable.
 
+## v0.1.0-beta.2 — 2026-07-31
+
+### 中文
+
+Windows 原生代理加载链更新：
+
+- 按 C 版本代理模式新增 Windows `DllMain`；
+- 在 `DLL_PROCESS_ATTACH` 中调用 `DisableThreadLibraryCalls`；
+- 游戏加载代理 `xgameruntime.dll` 时同步预加载同目录 `xgameruntime_o.dll`；
+- Microsoft 官方 `xgameruntime.dll` 的进程级副本统一命名为 `xgameruntime_o.dll`；
+- 保留 `BMCBL_NATIVE_XGAMERUNTIME` 作为可选绝对路径覆盖项；
+- 首次预加载失败不会永久缓存，后续原生 API 转发仍会重新尝试加载；
+- 显式卸载代理 DLL 时释放原生运行时模块；
+- 保留现有 `QueryApiImpl` 中间人拦截、Rust XUser Provider 与其余原生 API 动态转发；
+- 更新 Windows 中英文部署、协议和打包说明；
+- 未读取或依赖参考包中的 `setup_token.reg` 与 `deploy.ps1`。
+
+### English
+
+Windows native proxy loading-chain update:
+
+- adds a Windows `DllMain` following the C proxy behavior;
+- calls `DisableThreadLibraryCalls` during `DLL_PROCESS_ATTACH`;
+- synchronously preloads sibling `xgameruntime_o.dll` when the game loads proxy `xgameruntime.dll`;
+- standardizes the process-local copy of the Microsoft runtime as `xgameruntime_o.dll`;
+- keeps `BMCBL_NATIVE_XGAMERUNTIME` as an optional absolute-path override;
+- does not permanently cache an initial preload failure, so later forwarded calls retry loading;
+- releases the native runtime module during an explicit proxy unload;
+- preserves the existing `QueryApiImpl` interception, Rust XUser provider, and dynamic forwarding for native APIs;
+- updates bilingual Windows deployment, protocol, and packaging documentation;
+- does not read or depend on `setup_token.reg` or `deploy.ps1` from the reference package.
+
 ## v0.1.0-beta.1
 
 ### 中文
