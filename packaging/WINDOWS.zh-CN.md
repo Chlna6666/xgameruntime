@@ -18,28 +18,39 @@
 
 ## 代理文件布局
 
-游戏进程使用的目录应包含：
+推荐的游戏进程目录布局：
 
 ```text
 xgameruntime.dll    # 本项目生成的代理 DLL，由游戏加载
-xgameruntime_o.dll  # Microsoft 官方 xgameruntime.dll 的进程级副本，重命名后使用
+xgameruntime_o.dll  # Microsoft 官方 xgameruntime.dll 的进程级副本
 ```
 
-代理在 `DllMain(DLL_PROCESS_ATTACH)` 中按照 C 版本的方式同步执行：
+代理在 `DllMain(DLL_PROCESS_ATTACH)` 中按照参考 C 版本的方式关闭线程级 DLL 通知，并同步执行原生 Runtime 加载链。
 
-```c
-LoadLibraryA("xgameruntime_o.dll");
+加载顺序固定为：
+
+```text
+1. BMCBL_NATIVE_XGAMERUNTIME 指定的绝对路径（若设置）
+2. 同目录 xgameruntime_o.dll
+3. C:\Windows\System32\xgameruntime.dll
 ```
 
-同时调用 `DisableThreadLibraryCalls` 关闭线程级 DLL 通知。代理被显式卸载时，通过 `FreeLibrary` 释放原生 DLL。若启动阶段第一次预加载失败，不会永久缓存失败结果；后续需要转发 API 时仍会再次尝试加载 `xgameruntime_o.dll`。
+启动阶段第一次预加载失败不会被永久缓存，后续需要转发 API 时会重新尝试完整加载链。代理被显式卸载时，通过 `FreeLibrary` 释放已加载的原生 DLL。
 
-`BMCBL_NATIVE_XGAMERUNTIME` 继续作为可选的进程级绝对路径覆盖项。未设置该变量时，默认使用上述 `xgameruntime_o.dll` 代理布局。
+## 调试输出
+
+代理不依赖第三方日志库，同时通过以下方式输出信息：
+
+- 标准错误输出；
+- Win32 `OutputDebugStringW`。
+
+输出包含加载尝试、Win32 错误码、System32 回退、最终转发目标、缺失导出和卸载状态。可通过 Visual Studio、WinDbg、DebugView 或带控制台的测试宿主查看。
 
 ## 环境要求
 
 - Windows x64；
-- 已安装 Microsoft Gaming Services；
-- 准备一份 Microsoft 官方 `xgameruntime.dll` 的进程级副本，并命名为 `xgameruntime_o.dll`；
+- 已安装 Microsoft Gaming Services，或系统中存在可访问的 `C:\Windows\System32\xgameruntime.dll`；
+- 推荐准备一份 Microsoft 官方 `xgameruntime.dll` 的进程级副本，并命名为 `xgameruntime_o.dll`；
 - 需要自定义 XUser 时，启动器按 `BMCBL_PROTOCOL.md` 设置对应环境变量。
 
 ## 重要说明
@@ -52,7 +63,7 @@ LoadLibraryA("xgameruntime_o.dll");
 - 把代理 DLL 注册为系统全局运行时；
 - 把 Microsoft refresh token 或账号密码写入预认证 JSON。
 
-应当把官方 DLL 复制到游戏使用的进程级目录，再重命名为 `xgameruntime_o.dll`，不要修改系统安装目录。
+应当优先把官方 DLL 复制到游戏使用的进程级目录，再命名为 `xgameruntime_o.dll`，不要修改系统安装目录。
 
 自定义 XUser 默认关闭。只有提供完整且有效的 schema v2 启动上下文，并显式设置以下变量后才启用：
 
@@ -60,7 +71,7 @@ LoadLibraryA("xgameruntime_o.dll");
 BMCBL_XGAMERUNTIME_ENABLE_XUSER=1
 ```
 
-若官方 DLL 无法加载，代理仍按 C 版本行为完成自身装载，但需要原生转发的 API 会明确失败，不会伪装为加载成功。
+若所有原生 Runtime 候选都无法加载，代理仍按 C 版本行为完成自身装载，但需要原生转发的 API 会明确失败，不会伪装为加载成功。
 
 ## 当前状态
 
