@@ -69,17 +69,11 @@ impl TokenContext {
     fn new(user: XUserHandle, url: &str, utf16: bool) -> Result<Self, HResult> {
         let profile = profile_for_user(user)?;
         let token = select_token(&profile.preauth.xbox, url).ok_or(E_FAIL)?;
-        if token.expires_at_epoch
-            <= now_epoch().saturating_add(MIN_TOKEN_REMAINING_SECONDS)
-        {
+        if token.expires_at_epoch <= now_epoch().saturating_add(MIN_TOKEN_REMAINING_SECONDS) {
             return Err(E_FAIL);
         }
 
-        let authorization_text = format!(
-            "XBL3.0 x={};{}",
-            token.user_hash,
-            token.token.expose()
-        );
+        let authorization_text = format!("XBL3.0 x={};{}", token.user_hash, token.token.expose());
         let mut authorization = authorization_text.as_bytes().to_vec();
         authorization.push(0);
         let mut authorization_utf16 = authorization_text.encode_utf16().collect::<Vec<_>>();
@@ -120,9 +114,7 @@ fn now_epoch() -> u64 {
         .as_secs()
 }
 
-fn profile_for_user(
-    user: XUserHandle,
-) -> Result<&'static crate::profile::LaunchProfile, HResult> {
+fn profile_for_user(user: XUserHandle) -> Result<&'static crate::profile::LaunchProfile, HResult> {
     if user.is_null() {
         return Err(E_POINTER);
     }
@@ -209,17 +201,19 @@ fn url_host(url: &str) -> Option<String> {
     let authority = url.split_once("://")?.1;
     let authority_end = authority
         .char_indices()
-        .find_map(|(index, character)| {
-            matches!(character, '/' | '?' | '#').then_some(index)
-        })
+        .find_map(|(index, character)| matches!(character, '/' | '?' | '#').then_some(index))
         .unwrap_or(authority.len());
     let authority = &authority[..authority_end];
-    let host_port = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host_port = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
 
     let host = if let Some(bracketed) = host_port.strip_prefix('[') {
         bracketed.split_once(']')?.0
     } else {
-        host_port.split_once(':').map_or(host_port, |(host, _)| host)
+        host_port
+            .split_once(':')
+            .map_or(host_port, |(host, _)| host)
     };
 
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
@@ -431,15 +425,8 @@ pub unsafe extern "system" fn get_token_and_signature_result(
     if async_block.is_null() || buffer.is_null() || data.is_null() {
         return E_POINTER;
     }
-    let result = unsafe {
-        xasync::get_result(
-            async_block,
-            token_identity(false),
-            size,
-            buffer,
-            used,
-        )
-    };
+    let result =
+        unsafe { xasync::get_result(async_block, token_identity(false), size, buffer, used) };
     if result >= 0 {
         unsafe { data.write(buffer.cast()) };
     }
@@ -502,15 +489,8 @@ pub unsafe extern "system" fn get_token_and_signature_utf16_result(
     if async_block.is_null() || buffer.is_null() || data.is_null() {
         return E_POINTER;
     }
-    let result = unsafe {
-        xasync::get_result(
-            async_block,
-            token_identity(true),
-            size,
-            buffer,
-            used,
-        )
-    };
+    let result =
+        unsafe { xasync::get_result(async_block, token_identity(true), size, buffer, used) };
     if result >= 0 {
         unsafe { data.write(buffer.cast()) };
     }
