@@ -66,10 +66,15 @@ pub struct XUserGetTokenAndSignatureUtf16HttpHeader {
 
 struct TokenContext {
     utf16: bool,
+    method: String,
+    request_target: String,
+    cng_key_name: Option<String>,
+    body: Vec<u8>,
     authorization: Vec<u8>,
     authorization_utf16: Vec<u16>,
     signature: Vec<u8>,
     signature_utf16: Vec<u16>,
+    prepared: bool,
 }
 
 impl TokenContext {
@@ -92,40 +97,70 @@ impl TokenContext {
             token.user_hash,
             token.token.expose()
         ));
-        let signature_text = Zeroizing::new(match &profile.preauth.device_signing {
-            Some(device_signing) => signature::sign_request(RequestSignatureInput {
-                cng_key_name: &device_signing.cng_key_name,
-                method,
-                request_target: &request_target,
-                authorization: &authorization_text,
-                policy_header_values: &[],
-                body,
-            })?,
-            None => String::new(),
-        });
-
         let mut authorization = authorization_text.as_bytes().to_vec();
         authorization.push(0);
         let mut authorization_utf16 = authorization_text.encode_utf16().collect::<Vec<_>>();
         authorization_utf16.push(0);
 
-        let mut signature = signature_text.as_bytes().to_vec();
-        let mut signature_utf16 = signature_text.encode_utf16().collect::<Vec<_>>();
-        if !signature.is_empty() {
-            signature.push(0);
-            signature_utf16.push(0);
-        }
-
         Ok(Self {
             utf16,
+            method: method.to_string(),
+            request_target,
+            cng_key_name: profile
+                .preauth
+                .device_signing
+                .as_ref()
+                .map(|device_signing| device_signing.cng_key_name.clone()),
+            body: body.to_vec(),
             authorization,
             authorization_utf16,
-            signature,
-            signature_utf16,
+            signature: Vec::new(),
+            signature_utf16: Vec::new(),
+            prepared: false,
         })
     }
 
+    fn prepare(&mut self) -> Result<(), HResult> {
+        if self.prepared {
+            return Ok(());
+        }
+
+        let signature_result = if let Some(cng_key_name) = self.cng_key_name.as_deref() {
+            let authorization = self
+                .authorization
+                .strip_suffix(&[0])
+                .and_then(|value| std::str::from_utf8(value).ok())
+                .ok_or(E_INVALIDARG)?;
+            signature::sign_request(RequestSignatureInput {
+                cng_key_name,
+                method: &self.method,
+                request_target: &self.request_target,
+                authorization,
+                policy_header_values: &[],
+                body: &self.body,
+            })
+        } else {
+            Ok(String::new())
+        };
+
+        self.body.zeroize();
+        self.body.clear();
+
+        let signature_text = Zeroizing::new(signature_result?);
+        self.signature = signature_text.as_bytes().to_vec();
+        self.signature_utf16 = signature_text.encode_utf16().collect::<Vec<_>>();
+        if !self.signature.is_empty() {
+            self.signature.push(0);
+            self.signature_utf16.push(0);
+        }
+        self.prepared = true;
+        Ok(())
+    }
+
     fn required_size(&self) -> Option<usize> {
+        if !self.prepared {
+            return None;
+        }
         if self.utf16 {
             self.authorization_utf16
                 .len()
@@ -143,6 +178,7 @@ impl TokenContext {
 
 impl Drop for TokenContext {
     fn drop(&mut self) {
+        self.body.zeroize();
         self.authorization.zeroize();
         self.authorization_utf16.zeroize();
         self.signature.zeroize();
@@ -373,11 +409,16 @@ unsafe extern "system" fn token_provider(
     match operation {
         XAsyncOp::Begin => unsafe { xasync::schedule(provider_data.async_block, 0) },
         XAsyncOp::DoWork => {
-            let Some(required_size) = (unsafe { &*context }).required_size() else {
-                unsafe { xasync::complete(provider_data.async_block, E_FAIL, 0) };
-                return S_OK;
-            };
-            unsafe { xasync::complete(provider_data.async_block, S_OK, required_size) };
+            let context = unsafe { &mut *context };
+            let completion = context
+                .prepare()
+                .and_then(|()| context.required_size().ok_or(E_FAIL));
+            match completion {
+                Ok(required_size) => unsafe {
+                    xasync::complete(provider_data.async_block, S_OK, required_size)
+                },
+                Err(error) => unsafe { xasync::complete(provider_data.async_block, error, 0) },
+            }
             S_OK
         }
         XAsyncOp::GetResult => {
