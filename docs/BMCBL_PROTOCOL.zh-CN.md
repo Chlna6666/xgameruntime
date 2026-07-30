@@ -4,6 +4,31 @@
 
 本文定义 Better Minecraft Bedrock Launcher 与 Rust `xgameruntime.dll` 代理之间的进程级契约。
 
+## Windows 代理布局
+
+推荐使用两个进程级 DLL：
+
+```text
+xgameruntime.dll    # Minecraft 加载的 Rust 代理
+xgameruntime_o.dll  # Microsoft 官方 xgameruntime.dll 的副本
+```
+
+代理在 `DllMain(DLL_PROCESS_ATTACH)` 中同步执行原生 Runtime 加载链，顺序为：
+
+```text
+1. BMCBL_NATIVE_XGAMERUNTIME 指定的绝对路径（若设置）
+2. 同目录 xgameruntime_o.dll
+3. C:\Windows\System32\xgameruntime.dll
+```
+
+第一次预加载失败不会永久缓存，后续需要原生 API 转发时会重新尝试完整加载链。
+
+禁止修改、覆盖或重命名 Microsoft Gaming Services 安装目录中的文件。BMCBL 应优先把官方 Runtime 复制到游戏进程目录，并将副本命名为 `xgameruntime_o.dll`。
+
+## 调试输出
+
+代理不依赖第三方日志库，通过标准错误输出和 Win32 `OutputDebugStringW` 输出预加载尝试、回退路径、Win32 错误码、最终转发目标、缺失导出和卸载状态。
+
 ## 安全边界
 
 长期账号凭据由 BMCBL 管理。DLL 禁止接收或持久化：
@@ -23,17 +48,19 @@ P-256 私钥必须保持为当前用户 CNG Key Store 中的不可导出密钥�
 
 ## 环境变量
 
-BMCBL 在创建 Minecraft 进程前设置：
+BMCBL 可在创建 Minecraft 进程前设置：
 
 | 变量 | 是否必需 | 说明 |
 | --- | --- | --- |
-| `BMCBL_NATIVE_XGAMERUNTIME` | 是 | Microsoft 原生 `xgameruntime.dll` 的绝对路径，代理把未拦截接口转发到该 DLL。 |
+| `BMCBL_NATIVE_XGAMERUNTIME` | 否 | 可选的 Microsoft 原生 Runtime 进程级副本绝对路径。该路径加载失败时，代理继续尝试同目录 `xgameruntime_o.dll` 和 System32 Runtime。 |
 | `BMCBL_XGAMERUNTIME_PROFILE` | 自定义 Profile 时 | 稳定的 BMCBL Profile ID，只允许 ASCII 字母、数字、`.`、`_` 和 `-`。 |
 | `BMCBL_XGAMERUNTIME_PREAUTH` | 自定义 Profile 时 | 带版本号的预认证 JSON 绝对路径。 |
 | `BMCBL_XGAMERUNTIME_NONCE` | 建议 | 每次启动生成的随机 nonce，必须与 JSON 内容一致。 |
-| `BMCBL_XGAMERUNTIME_ENABLE_XUSER` | 自定义 XUser 时 | 设置为 `1` 启用实验性 Rust XUser Provider。未设置时全部 API 转发到原生运行时。 |
+| `BMCBL_XGAMERUNTIME_ENABLE_XUSER` | 自定义 XUser 时 | 设置为 `1` 启用实验性 Rust XUser Provider。未设置时全部 API 转发到原生 Runtime。 |
 
-未提供自定义 Profile 变量时，DLL 作为纯原生代理运行。变量不完整或校验失败时，自定义 XUser 拦截保持关闭，并继续使用 Microsoft 原生运行时。
+仅使用纯原生代理时，只要同目录 `xgameruntime_o.dll` 或 System32 Runtime 可以加载，就不要求设置 BMCBL 环境变量。
+
+未提供自定义 Profile 变量时，DLL 作为纯原生代理运行。变量不完整或校验失败时，自定义 XUser 拦截保持关闭，并继续使用 Microsoft 原生 Runtime。
 
 ## 预认证 schema v2
 
@@ -121,13 +148,7 @@ BMCBL 在创建 Minecraft 进程前设置：
 6. 每次启动 schema-v2 文件只包含 CNG key name 与短期 Token；
 7. 后续启动继续使用同一密钥和 Device ID，除非用户明确重置设备身份。
 
-DLL 使用 `NCryptOpenKey` 打开密钥，使用 `NCryptSignHash` 对请求摘要签名。DLL 不负责：
-
-- 创建密钥；
-- 导出私钥；
-- 删除密钥；
-- 轮换密钥；
-- 备份私钥。
+DLL 使用 `NCryptOpenKey` 打开密钥，使用 `NCryptSignHash` 对请求摘要签名。DLL 不负责创建、导出、删除、轮换或备份私钥。
 
 ## Xbox 请求签名格式
 
@@ -161,15 +182,11 @@ BMCBL 应当：
 
 后续协议版本应考虑传递复制后的只读文件句柄，而不是路径，以减少路径替换和竞态风险。
 
-## 原生运行时转发
+## 原生 Runtime 转发
 
-代理不会自行扫描 Gaming Services。Microsoft 原生运行时路径由 BMCBL 解析后以绝对路径传入，从而避免：
+代理按本文顶部记录的顺序选择转发目标。`BMCBL_NATIVE_XGAMERUNTIME` 是可选的已校验覆盖项，不再是硬性要求。
 
-- 代理 DLL 递归加载自身；
-- 修改系统 Gaming Services；
-- 依赖硬编码的包版本或安装目录。
-
-只有经过验证的 XUser Runtime Class/Interface GUID 在显式开启 XUser Feature Gate 时被拦截。其他 Runtime Class 仍由 Microsoft 原生运行时处理。
+代理不会修改 Gaming Services 安装，也不会主动把自身作为转发目标。只有经过验证的 XUser Runtime Class/Interface GUID 在显式开启 XUser Feature Gate 时被拦截。其他 Runtime Class 和原生导出仍由最终选中的 Microsoft Runtime 处理。
 
 ## 当前实现的 XUser 接口
 
