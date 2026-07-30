@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - rust-bootstrap
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: rustc --version --verbose
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Check
+        run: cargo check --all-targets
+
+      - name: Test
+        run: cargo test --all-targets
+
+      - name: Build Windows DLL
+        if: runner.os == 'Windows'
+        run: cargo build --release --target x86_64-pc-windows-msvc

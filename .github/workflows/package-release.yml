@@ -1,0 +1,273 @@
+name: Package and Release
+
+on:
+  push:
+    branches:
+      - rust-bootstrap
+      - "release/**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.1.0-beta.1"
+        required: false
+        default: "v0.1.0-beta.1"
+        type: string
+      publish:
+        description: "Create or update a GitHub prerelease"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  WINEGDK_COMMIT: 75637b674e1f191e65753663c4c0c32bea05ba6e
+
+jobs:
+  metadata:
+    name: Resolve package metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      publish: ${{ steps.metadata.outputs.publish }}
+
+    steps:
+      - name: Resolve version and publish mode
+        id: metadata
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+
+          publish=false
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="$GITHUB_REF_NAME"
+            publish=true
+          elif [[ "$GITHUB_REF" == refs/heads/release/v* ]]; then
+            version="${GITHUB_REF_NAME#release/}"
+            publish=true
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="${INPUT_VERSION:-v0.1.0-beta.1}"
+            publish="${INPUT_PUBLISH:-false}"
+          else
+            version="v0.1.0-dev.${GITHUB_RUN_NUMBER}"
+          fi
+
+          if [[ "$version" != v* ]]; then
+            version="v${version}"
+          fi
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid version: $version" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $version"
+          echo "Publish release: $publish"
+
+  windows-package:
+    name: Package Windows x64
+    needs: metadata
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout package source
+        uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Show Rust toolchain
+        working-directory: source
+        run: rustc --version --verbose
+
+      - name: Test Windows implementation
+        working-directory: source
+        run: cargo test --all-targets
+
+      - name: Build Windows release DLL
+        working-directory: source
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Create Windows archive
+        shell: pwsh
+        run: |
+          ./source/scripts/package-windows.ps1 `
+            -Version "${{ needs.metadata.outputs.version }}" `
+            -SourceCommit "${{ github.sha }}" `
+            -OutputDirectory "${{ github.workspace }}/dist"
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: xgameruntime-${{ needs.metadata.outputs.version }}-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  wine-package:
+    name: Package Wine x64
+    needs: metadata
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout package source
+        uses: actions/checkout@v4
+        with:
+          path: source
+
+      - name: Checkout pinned WineGDK source
+        uses: actions/checkout@v4
+        with:
+          repository: Chlna6666/WineGDK
+          ref: ${{ env.WINEGDK_COMMIT }}
+          path: winegdk
+          fetch-depth: 1
+
+      - name: Install Wine build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bison \
+            build-essential \
+            flex \
+            gcc-mingw-w64-x86-64 \
+            libdbus-1-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libgnutls28-dev \
+            libudev-dev \
+            libunwind-dev \
+            libvulkan-dev \
+            pkg-config \
+            python3 \
+            unzip \
+            zip
+
+      - name: Configure WineGDK x64 build
+        run: |
+          set -euo pipefail
+          mkdir -p wine-build
+          cd wine-build
+          ../winegdk/configure --enable-win64 --without-x --without-wayland
+
+      - name: Build Wine xgameruntime module
+        run: |
+          set -euo pipefail
+          make -C wine-build/dlls/xgameruntime -j2
+          find wine-build/dlls/xgameruntime -maxdepth 2 -type f -name 'xgameruntime.dll*' -print -exec file {} \;
+
+      - name: Create Wine archive
+        run: |
+          chmod +x source/scripts/package-wine.sh
+          source/scripts/package-wine.sh \
+            "${{ needs.metadata.outputs.version }}" \
+            "${{ github.sha }}" \
+            "${{ env.WINEGDK_COMMIT }}" \
+            winegdk \
+            wine-build \
+            dist
+
+      - name: Upload Wine package
+        uses: actions/upload-artifact@v4
+        with:
+          name: xgameruntime-${{ needs.metadata.outputs.version }}-wine-x64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub prerelease
+    needs:
+      - metadata
+      - windows-package
+      - wine-package
+    if: needs.metadata.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: xgameruntime-${{ needs.metadata.outputs.version }}-windows-x64
+          path: downloaded/windows
+
+      - name: Download Wine package
+        uses: actions/download-artifact@v4
+        with:
+          name: xgameruntime-${{ needs.metadata.outputs.version }}-wine-x64
+          path: downloaded/wine
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find downloaded -type f -name '*.zip' -exec cp '{}' release-assets/ \;
+          cd release-assets
+          sha256sum ./*.zip | sed 's#  \./#  #' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create or update prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          ## 中文说明
+
+          这是面向 Minecraft Bedrock GDK 的实验性双运行时预发布包。
+
+          发布文件：
+          - Windows x64：Rust/MSVC 原生代理，包含 BMCBL schema v2 协议和 CNG 请求签名支持。
+          - Wine x64：从 WineGDK 固定提交 \`${WINEGDK_COMMIT}\` 构建的 Wine 模块。
+          - SHA256SUMS.txt：两个 ZIP 的 SHA-256 校验值。
+
+          Windows 与 Wine 产物是不同实现，不能互换。安装前请阅读压缩包内的中文 README。
+
+          ## English
+
+          Experimental dual-runtime package for Minecraft Bedrock GDK.
+
+          Assets:
+          - Windows x64 Rust/MSVC proxy with BMCBL schema-v2 and CNG request signing.
+          - Wine x64 module built from WineGDK commit \`${WINEGDK_COMMIT}\`.
+          - Combined SHA-256 checksums.
+
+          The Windows and Wine artifacts are different implementations and are not interchangeable. Read the bilingual README inside each package before installation.
+          EOF
+
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "xgameruntime $VERSION" \
+              --notes-file release-notes.md \
+              --prerelease
+          else
+            gh release create "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "xgameruntime $VERSION" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi
+
+          gh release upload "$VERSION" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
+            release-assets/*.zip \
+            release-assets/SHA256SUMS.txt
