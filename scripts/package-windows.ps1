@@ -37,24 +37,40 @@ Copy-Item -LiteralPath (Join-Path $repositoryRoot "packaging/WINDOWS.zh-CN.md") 
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "docs/BMCBL_PROTOCOL.md") -Destination (Join-Path $stageDirectory "BMCBL_PROTOCOL.md")
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "docs/BMCBL_PROTOCOL.zh-CN.md") -Destination (Join-Path $stageDirectory "BMCBL_PROTOCOL.zh-CN.md")
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "docs/preauth-v2.schema.json") -Destination (Join-Path $stageDirectory "preauth-v2.schema.json")
+Copy-Item -LiteralPath (Join-Path $repositoryRoot "CHANGELOG.md") -Destination (Join-Path $stageDirectory "CHANGELOG.md")
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "LICENSE") -Destination (Join-Path $stageDirectory "LICENSE")
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "NOTICE.md") -Destination (Join-Path $stageDirectory "NOTICE.md")
 
 $rustcVersion = (& rustc --version).Trim()
 $manifest = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     package = "xgameruntime"
     version = $Version
-    variant = "windows-native"
+    variant = "windows-native-proxy"
     architecture = "x86_64"
     rust_target = "x86_64-pc-windows-msvc"
     source_repository = "https://github.com/Chlna6666/xgameruntime"
     source_commit = $SourceCommit
     toolchain = $rustcVersion
     documentation_languages = @("en", "zh-CN")
+    native_runtime = [ordered]@{
+        override_environment = "BMCBL_NATIVE_XGAMERUNTIME"
+        sibling_proxy_name = "xgameruntime_o.dll"
+        system_fallback = "C:\Windows\System32\xgameruntime.dll"
+        load_order = @(
+            "environment_override",
+            "sibling_xgameruntime_o",
+            "system32_xgameruntime"
+        )
+        diagnostics = @(
+            "standard_error",
+            "OutputDebugStringW"
+        )
+        microsoft_runtime_included = $false
+    }
     experimental = $true
 }
-$manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $stageDirectory "manifest.json") -Encoding utf8NoBOM
+$manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stageDirectory "manifest.json") -Encoding utf8NoBOM
 
 $checksumLines = Get-ChildItem -LiteralPath $stageDirectory -File |
     Sort-Object Name |
@@ -75,6 +91,7 @@ $requiredFiles = @(
     "BMCBL_PROTOCOL.md",
     "BMCBL_PROTOCOL.zh-CN.md",
     "preauth-v2.schema.json",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE.md",
     "manifest.json",
@@ -85,6 +102,18 @@ foreach ($requiredFile in $requiredFiles) {
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "Windows package validation failed, missing: $requiredFile"
     }
+}
+
+$manifestPath = Join-Path $validatedPackage "manifest.json"
+$validatedManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+if ($validatedManifest.version -ne $Version) {
+    throw "Windows package validation failed, manifest version mismatch"
+}
+if ($validatedManifest.native_runtime.sibling_proxy_name -ne "xgameruntime_o.dll") {
+    throw "Windows package validation failed, unexpected sibling proxy name"
+}
+if ($validatedManifest.native_runtime.system_fallback -ne "C:\Windows\System32\xgameruntime.dll") {
+    throw "Windows package validation failed, unexpected System32 fallback"
 }
 
 $checksumPath = Join-Path $validatedPackage "SHA256SUMS"
