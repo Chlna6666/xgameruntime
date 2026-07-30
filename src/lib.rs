@@ -24,6 +24,38 @@ use abi::{
     UninitializeApiImplFn, XErrorReportFn, XGameRuntimeInitializeFn, XGameRuntimeUninitializeFn,
 };
 
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::HMODULE,
+    System::LibraryLoader::DisableThreadLibraryCalls,
+};
+
+#[cfg(windows)]
+const DLL_PROCESS_DETACH: u32 = 0;
+#[cfg(windows)]
+const DLL_PROCESS_ATTACH: u32 = 1;
+
+#[cfg(windows)]
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn DllMain(
+    instance: HMODULE,
+    reason: u32,
+    reserved: *mut c_void,
+) -> i32 {
+    match reason {
+        DLL_PROCESS_ATTACH => {
+            let _ = unsafe { DisableThreadLibraryCalls(instance) };
+            native::preload();
+        }
+        DLL_PROCESS_DETACH if reserved.is_null() => unsafe {
+            native::unload();
+        },
+        _ => {}
+    }
+
+    1
+}
+
 fn native_symbol(name: &'static [u8]) -> Result<usize, HResult> {
     native::runtime()
         .map_err(|_| E_FAIL)?
