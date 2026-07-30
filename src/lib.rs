@@ -16,8 +16,7 @@ use core::ffi::{c_char, c_void};
 use abi::{
     DllCanUnloadNowFn, DllGetClassObjectFn, E_FAIL, E_POINTER, Guid, HResult,
     InitializeApiImplEx2Fn, InitializeApiImplExFn, InitializeApiImplFn, QueryApiImplFn, S_FALSE,
-    UninitializeApiImplFn, XErrorReportFn, XGameRuntimeInitializeFn,
-    XGameRuntimeUninitializeFn,
+    UninitializeApiImplFn, XErrorReportFn, XGameRuntimeInitializeFn, XGameRuntimeUninitializeFn,
 };
 
 fn native_symbol(name: &'static [u8]) -> Result<usize, HResult> {
@@ -122,10 +121,7 @@ pub unsafe extern "system" fn UninitializeApiImpl() -> HResult {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "system" fn XErrorReport(
-    status: HResult,
-    message: *const c_char,
-) -> HResult {
+pub unsafe extern "system" fn XErrorReport(status: HResult, message: *const c_char) -> HResult {
     let Ok(address) = native_symbol(b"XErrorReport\0") else {
         return E_FAIL;
     };
