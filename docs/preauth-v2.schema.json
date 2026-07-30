@@ -1,0 +1,222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Chlna6666/xgameruntime/blob/main/docs/preauth-v2.schema.json",
+  "title": "BMCBL xgameruntime pre-authentication document v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "launch_nonce",
+    "issued_at_epoch",
+    "expires_at_epoch",
+    "xbox"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "profile_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "launch_nonce": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "issued_at_epoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "expires_at_epoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "device_signing": {
+      "$ref": "#/$defs/deviceSigning"
+    },
+    "xbox": {
+      "$ref": "#/$defs/xboxPreauth"
+    }
+  },
+  "$defs": {
+    "nonZeroDecimal": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$",
+      "maxLength": 20
+    },
+    "tokenEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token",
+        "user_hash",
+        "relying_party",
+        "expires_at_epoch"
+      ],
+      "properties": {
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "user_hash": {
+          "$ref": "#/$defs/nonZeroDecimal"
+        },
+        "relying_party": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "expires_at_epoch": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "deviceSigning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cng_key_name"
+      ],
+      "properties": {
+        "cng_key_name": {
+          "type": "string",
+          "pattern": "^BMCBL\\.XboxDevice\\.[A-Za-z0-9._-]+$",
+          "maxLength": 240
+        }
+      }
+    },
+    "xboxPreauth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "xuid",
+        "gamertag",
+        "user",
+        "xbox_live"
+      ],
+      "properties": {
+        "xuid": {
+          "$ref": "#/$defs/nonZeroDecimal"
+        },
+        "gamertag": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "age_group": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "privileges": {
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 256,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          }
+        },
+        "user": {
+          "$ref": "#/$defs/tokenEnvelope"
+        },
+        "xbox_live": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/tokenEnvelope"
+            },
+            {
+              "properties": {
+                "relying_party": {
+                  "const": "http://xboxlive.com"
+                }
+              }
+            }
+          ]
+        },
+        "sisu": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/tokenEnvelope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "multiplayer": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/tokenEnvelope"
+                },
+                {
+                  "properties": {
+                    "relying_party": {
+                      "const": "https://multiplayer.minecraft.net/"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "realms": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/tokenEnvelope"
+                },
+                {
+                  "properties": {
+                    "relying_party": {
+                      "const": "https://pocket.realms.minecraft.net/"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "licensing": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/tokenEnvelope"
+                },
+                {
+                  "properties": {
+                    "relying_party": {
+                      "const": "http://licensing.xboxlive.com"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
