@@ -217,4 +217,125 @@ mod tests {
         assert_eq!(SIGNATURE_HEADER_SIZE, 76);
         assert_eq!(STANDARD.encode([0u8; SIGNATURE_HEADER_SIZE]).len(), 104);
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn signs_and_verifies_with_temporary_cng_key() {
+        use windows_sys::Win32::Security::Cryptography::{
+            NCRYPT_KEY_HANDLE, NCRYPT_OVERWRITE_KEY_FLAG, NCRYPT_PROV_HANDLE,
+            NCryptCreatePersistedKey, NCryptDeleteKey, NCryptFinalizeKey, NCryptFreeObject,
+            NCryptOpenStorageProvider, NCryptVerifySignature,
+        };
+
+        const PROVIDER_NAME: &str = "Microsoft Software Key Storage Provider";
+        const ALGORITHM_NAME: &str = "ECDSA_P256";
+
+        struct TemporaryKey {
+            provider: NCRYPT_PROV_HANDLE,
+            key: NCRYPT_KEY_HANDLE,
+        }
+
+        impl Drop for TemporaryKey {
+            fn drop(&mut self) {
+                if self.key != 0 {
+                    unsafe { NCryptDeleteKey(self.key, 0) };
+                    self.key = 0;
+                }
+                if self.provider != 0 {
+                    unsafe { NCryptFreeObject(self.provider) };
+                    self.provider = 0;
+                }
+            }
+        }
+
+        let provider_name = PROVIDER_NAME
+            .encode_utf16()
+            .chain(core::iter::once(0))
+            .collect::<Vec<_>>();
+        let algorithm_name = ALGORITHM_NAME
+            .encode_utf16()
+            .chain(core::iter::once(0))
+            .collect::<Vec<_>>();
+        let key_name = format!(
+            "BMCBL.XboxDevice.ci-{}-{}",
+            std::process::id(),
+            current_filetime()
+        );
+        let key_name_utf16 = key_name
+            .encode_utf16()
+            .chain(core::iter::once(0))
+            .collect::<Vec<_>>();
+
+        let mut temporary_key = TemporaryKey {
+            provider: 0,
+            key: 0,
+        };
+        assert_eq!(
+            unsafe {
+                NCryptOpenStorageProvider(
+                    &mut temporary_key.provider,
+                    provider_name.as_ptr(),
+                    0,
+                )
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                NCryptCreatePersistedKey(
+                    temporary_key.provider,
+                    &mut temporary_key.key,
+                    algorithm_name.as_ptr(),
+                    key_name_utf16.as_ptr(),
+                    0,
+                    NCRYPT_OVERWRITE_KEY_FLAG,
+                )
+            },
+            0
+        );
+        assert_eq!(unsafe { NCryptFinalizeKey(temporary_key.key, 0) }, 0);
+
+        let input = RequestSignatureInput {
+            cng_key_name: &key_name,
+            method: "POST",
+            request_target: "/path?q=1",
+            authorization: "XBL3.0 x=1;token",
+            policy_header_values: &[],
+            body: b"abc",
+        };
+        let encoded = sign_request(input).expect("CNG signing should succeed");
+        let header = STANDARD
+            .decode(encoded)
+            .expect("signature header must be valid base64");
+        assert_eq!(header.len(), SIGNATURE_HEADER_SIZE);
+        assert_eq!(
+            u32::from_be_bytes(header[..4].try_into().unwrap()),
+            SIGNATURE_POLICY_VERSION
+        );
+
+        let timestamp = u64::from_be_bytes(header[4..12].try_into().unwrap());
+        let verify_input = RequestSignatureInput {
+            cng_key_name: &key_name,
+            method: "POST",
+            request_target: "/path?q=1",
+            authorization: "XBL3.0 x=1;token",
+            policy_header_values: &[],
+            body: b"abc",
+        };
+        let digest = hash_request(&verify_input, timestamp);
+        assert_eq!(
+            unsafe {
+                NCryptVerifySignature(
+                    temporary_key.key,
+                    core::ptr::null_mut(),
+                    digest.as_ptr() as *mut u8,
+                    digest.len() as u32,
+                    header[12..].as_ptr() as *mut u8,
+                    P256_SIGNATURE_SIZE as u32,
+                    0,
+                )
+            },
+            0
+        );
+    }
 }
