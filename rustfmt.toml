@@ -1,0 +1,4 @@
+# Keep translated ABI symbol groups in the same semantic order as their source
+# interface definitions. This also avoids rustfmt reordering vtable-related
+# names away from their documented slot groups.
+reorder_imports = false
