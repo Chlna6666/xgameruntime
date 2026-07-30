@@ -13,7 +13,7 @@ This repository produces two different artifacts:
 
 ## Windows proxy architecture
 
-The Windows artifact is the `xgameruntime.dll` loaded by the game. A process-local copy of the original Microsoft runtime is named `xgameruntime_o.dll`:
+The Windows artifact is the `xgameruntime.dll` loaded by the game. A process-local copy of the original Microsoft runtime is normally named `xgameruntime_o.dll`:
 
 ```text
 Minecraft Bedrock GDK
@@ -21,10 +21,10 @@ Minecraft Bedrock GDK
         ▼
 xgameruntime.dll (Rust MITM proxy)
         ├─ validated XUser GUID → Rust IXUserImpl
-        └─ other runtime APIs   → xgameruntime_o.dll
+        └─ other runtime APIs   → Microsoft native runtime
 ```
 
-Default layout:
+Recommended layout:
 
 ```text
 <game runtime directory>/
@@ -41,19 +41,53 @@ The proxy follows the reference C implementation's `DllMain` behavior:
 
 1. the game loads `xgameruntime.dll`;
 2. `DllMain(DLL_PROCESS_ATTACH)` calls `DisableThreadLibraryCalls`;
-3. it synchronously calls `LoadLibraryA("xgameruntime_o.dll")`;
+3. the proxy synchronously executes the native-runtime loading chain;
 4. `QueryApiImpl` first attempts the Rust XUser interception path;
-5. non-intercepted interfaces and native exports are resolved through `GetProcAddress` on the original module;
-6. an explicit proxy unload releases the original module with `FreeLibrary`.
+5. non-intercepted interfaces and native exports are resolved with `GetProcAddress` on the selected Microsoft runtime;
+6. an explicit proxy unload releases the native module with `FreeLibrary`.
 
-An attach-time preload failure does not prevent the proxy itself from attaching, matching the C implementation. The failure is not cached permanently: later forwarded calls retry loading `xgameruntime_o.dll`. If the original runtime still cannot be loaded, APIs requiring native forwarding fail explicitly.
+The native runtime is attempted in this order:
+
+```text
+1. absolute BMCBL_NATIVE_XGAMERUNTIME override, when configured
+2. sibling xgameruntime_o.dll
+3. C:\Windows\System32\xgameruntime.dll
+```
+
+An attach-time preload failure does not prevent the proxy itself from attaching, matching the C implementation. Failures are not cached permanently: later forwarded calls retry the complete loading chain. If every candidate still fails, APIs requiring native forwarding fail explicitly.
+
+## Diagnostic output
+
+The Windows proxy does not use a third-party logging library. It writes diagnostics through:
+
+- standard error;
+- Win32 `OutputDebugStringW`.
+
+The messages cover:
+
+- `DLL_PROCESS_ATTACH` preload start and result;
+- environment override attempts;
+- sibling `xgameruntime_o.dll` attempts;
+- System32 fallback;
+- Win32 load errors;
+- selected forwarding target and `HMODULE`;
+- missing exports;
+- explicit unload state.
+
+These messages can be viewed through Visual Studio, WinDbg, DebugView, or a test host with an attached console.
 
 ## Optional native-runtime override
 
-The default proxy layout does not require a runtime-path environment variable. It loads:
+The default layout does not require a runtime-path environment variable. The proxy first attempts:
 
 ```text
 xgameruntime_o.dll
+```
+
+If that file is unavailable or cannot be loaded, it automatically tries:
+
+```text
+C:\Windows\System32\xgameruntime.dll
 ```
 
 A launcher may optionally provide a different process-local copy through an absolute-path override:
@@ -62,13 +96,15 @@ A launcher may optionally provide a different process-local copy through an abso
 BMCBL_NATIVE_XGAMERUNTIME=<absolute path to a copy of Microsoft's runtime>
 ```
 
-The override should be scoped to the Minecraft child process and must not be configured globally.
+The override should be scoped to the Minecraft child process and must not be configured globally. If it fails, the proxy continues with the sibling and System32 candidates.
 
 ## Windows implementation
 
 - Windows x64 MSVC `cdylib` producing `xgameruntime.dll`;
 - WineGDK-compatible export names and ordinals;
 - C-style `DllMain` preload and `xgameruntime_o.dll` proxy layout;
+- automatic System32 fallback;
+- standard-error and `OutputDebugStringW` diagnostics without a third-party logger;
 - dynamic lookup and forwarding of native exports;
 - `QueryApiImpl` man-in-the-middle interception;
 - BMCBL profile handling and strict pre-authentication schema v2;
@@ -123,13 +159,13 @@ Output:
 target/x86_64-pc-windows-msvc/release/xgameruntime.dll
 ```
 
-Deployment also requires a process-local copy of the original Microsoft DLL named:
+The recommended deployment also provides a process-local copy of the Microsoft DLL named:
 
 ```text
 xgameruntime_o.dll
 ```
 
-The Microsoft DLL is not redistributed by this project.
+If that copy is missing, the proxy tries `C:\Windows\System32\xgameruntime.dll`. The Microsoft DLL is not redistributed by this project.
 
 ## Packaging and version
 
