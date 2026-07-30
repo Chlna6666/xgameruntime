@@ -22,7 +22,9 @@ if [[ ${#dll_candidates[@]} -ne 1 ]]; then
 fi
 
 package_name="xgameruntime-${version}-wine-x64"
-stage_dir="$(mktemp -d)/${package_name}"
+temporary_root="$(mktemp -d)"
+stage_dir="${temporary_root}/${package_name}"
+validation_root="${temporary_root}/validation"
 archive_path="${output_dir}/${package_name}.zip"
 mkdir -p "$stage_dir"
 
@@ -76,12 +78,36 @@ PY
   find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
     | LC_ALL=C sort \
     | xargs -r sha256sum > SHA256SUMS
+  sha256sum -c SHA256SUMS
 )
 
 rm -f "$archive_path"
 (
-  cd "$(dirname "$stage_dir")"
+  cd "$temporary_root"
   zip -9 -r "$archive_path" "$package_name" >/dev/null
+)
+
+mkdir -p "$validation_root"
+unzip -q "$archive_path" -d "$validation_root"
+validated_package="$validation_root/$package_name"
+required_files=(
+  xgameruntime.dll
+  README.md
+  README.zh-CN.md
+  LICENSE.winegdk
+  SOURCE.md
+  manifest.json
+  SHA256SUMS
+)
+for required_file in "${required_files[@]}"; do
+  if [[ ! -f "$validated_package/$required_file" ]]; then
+    echo "Wine package validation failed, missing: $required_file" >&2
+    exit 1
+  fi
+done
+(
+  cd "$validated_package"
+  sha256sum -c SHA256SUMS
 )
 
 archive_hash="$(sha256sum "$archive_path" | cut -d' ' -f1)"
