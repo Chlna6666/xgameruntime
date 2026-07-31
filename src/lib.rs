@@ -42,7 +42,16 @@ pub unsafe extern "system" fn DllMain(
     match reason {
         DLL_PROCESS_ATTACH => {
             let _ = unsafe { DisableThreadLibraryCalls(instance) };
-            native::preload();
+
+            // The custom XUser switch is also the proxy activation gate. When
+            // it is absent, do not perform any original-runtime loading or
+            // profile initialization under the loader lock. Export calls are
+            // forwarded lazily to the Microsoft runtime instead.
+            if xuser::enabled() {
+                native::preload();
+            } else {
+                native::passthrough_attach();
+            }
         }
         DLL_PROCESS_DETACH if reserved.is_null() => unsafe {
             native::unload();
