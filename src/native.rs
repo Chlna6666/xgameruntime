@@ -63,7 +63,7 @@ mod platform {
                     )),
                 }
             } else {
-                debug_log("未设置 BMCBL_NATIVE_XGAMERUNTIME，使用默认代理布局");
+                debug_log("未设置 BMCBL_NATIVE_XGAMERUNTIME，使用默认官方 Runtime 查找顺序");
             }
 
             match Self::load_proxy_sibling() {
@@ -231,8 +231,15 @@ static NATIVE_RUNTIME: OnceLock<NativeRuntime> = OnceLock::new();
 static NATIVE_RUNTIME_INIT: Mutex<()> = Mutex::new(());
 
 #[cfg(windows)]
+pub fn passthrough_attach() {
+    platform::debug_log(
+        "DLL_PROCESS_ATTACH: 未启用 BMCBL 自定义 XUser，跳过原生 Runtime 预加载并进入惰性透明转发模式",
+    );
+}
+
+#[cfg(windows)]
 pub fn preload() {
-    platform::debug_log("DLL_PROCESS_ATTACH: 开始同步预加载原生 Runtime");
+    platform::debug_log("DLL_PROCESS_ATTACH: 已启用自定义 XUser，开始同步预加载原生 Runtime");
     match runtime() {
         Ok(runtime) => platform::debug_log(&format!(
             "DLL_PROCESS_ATTACH: 预加载完成，转发目标为 {}",
