@@ -11,17 +11,24 @@ use crate::{
 /// profile. Returning `None` means the request must be forwarded to the native
 /// Microsoft runtime.
 ///
-/// XUser interception is intentionally opt-in until the ABI and Minecraft
-/// integration tests cover the complete async and token/signature path.
+/// XUser interception is strictly opt-in. The enable switch is checked before
+/// reading any profile or pre-authentication environment, so a process without
+/// `BMCBL_XGAMERUNTIME_ENABLE_XUSER=1` remains a transparent proxy and follows
+/// the native loader chain (`xgameruntime_o.dll`, then the System32 runtime).
 pub unsafe fn query_api(
     runtime_class_id: *const Guid,
     interface_id: *const Guid,
     out: *mut *mut c_void,
 ) -> Option<HResult> {
-    let _profile = state::selected_profile()?;
+    // This is the hard pass-through gate. Profile variables by themselves must
+    // never replace the official Microsoft sign-in implementation.
     if !xuser::enabled() {
         return None;
     }
+
+    // Missing, incomplete, invalid, or expired profile data also disables the
+    // custom provider and falls back to the native Microsoft runtime.
+    let _profile = state::selected_profile()?;
 
     let runtime_class_id = unsafe { &*runtime_class_id };
     if *runtime_class_id != xuser::CLSID_XUSER_IMPL {
